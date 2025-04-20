@@ -50,6 +50,13 @@
             box-shadow: 0 2px #555;
             transform: translateY(2px);
         }
+        /* Style for disabled button */
+        button:disabled {
+            background-color: #777; /* Gray background */
+            color: #ccc; /* Lighter text */
+            cursor: not-allowed;
+            box-shadow: 0 4px #555;
+        }
         /* Style the message area */
         #message {
             margin-top: 15px;
@@ -155,45 +162,62 @@
 
         // --- Initialization ---
         function initGame() {
-            console.log("Initializing game..."); // Debug log
+            console.log("--- initGame: Start ---");
             // Reset game state
             isGameOver = false;
             originCoords = null;
             currentCoords = null;
             ghosts = [];
             frameCount = 0;
+            console.log("initGame: State variables reset.");
 
             // Stop existing loops/watches
             if (watchId) {
                 navigator.geolocation.clearWatch(watchId);
                 watchId = null;
-                console.log("GPS watch cleared.");
+                console.log("initGame: GPS watch cleared.");
+            } else {
+                 console.log("initGame: No active GPS watch to clear.");
             }
             if (animationFrameId) {
                 cancelAnimationFrame(animationFrameId);
                 animationFrameId = null;
-                console.log("Animation frame cancelled.");
+                console.log("initGame: Animation frame cancelled.");
+            } else {
+                 console.log("initGame: No active animation frame to cancel.");
             }
 
             // Reset UI elements
+            console.log("initGame: Updating UI elements...");
             gameOverScreen.classList.add('hidden');
+            console.log("initGame: Game over screen hidden.");
             startButton.classList.remove('hidden');
+            console.log("initGame: Start button unhidden.");
+            startButton.disabled = false; // *** Explicitly enable start button ***
+            console.log("initGame: Start button explicitly enabled. Disabled state:", startButton.disabled);
             resetOriginButton.classList.add('hidden');
+            console.log("initGame: Reset origin button hidden.");
             safetyWarning.classList.add('hidden');
+            console.log("initGame: Safety warning hidden.");
             messageEl.textContent = 'Press Start Game to begin!';
+            console.log("initGame: Message text reset.");
 
             // Ensure canvas is sized correctly and draw initial state
             resizeCanvas(); // Call resize first
             playerPos = { x: canvasSize / 2, y: canvasSize / 2 }; // Reset player position after resize
             drawGameArea(); // Draw initial border
             drawPacman(playerPos.x, playerPos.y); // Draw Pacman centered
-             console.log("Game initialized.");
+            console.log("--- initGame: Finished ---");
         }
 
         // --- Event Listeners ---
         startButton.addEventListener('click', startGame);
         resetOriginButton.addEventListener('click', resetOrigin);
-        restartButton.addEventListener('click', initGame); // Restart calls initGame
+        // Add log inside listener to confirm it fires
+        restartButton.addEventListener('click', () => {
+            console.log("--- Restart button clicked ---");
+            initGame();
+        });
         window.addEventListener('resize', resizeCanvas); // Adjust canvas on resize
 
         // --- Canvas Resizing ---
@@ -213,80 +237,85 @@
 
                 // If game is running, redraw immediately and update positions if needed
                 if (animationFrameId && !isGameOver) {
-                     // Recalculate player position based on new canvas size and existing coords
                     if (currentCoords && originCoords) {
-                        updatePlayerPosition(currentCoords); // Recalculate pixels from meters
+                        updatePlayerPosition(currentCoords);
                     } else {
-                         // Center player if no coords yet (shouldn't happen if game is running)
                         playerPos = { x: canvasSize / 2, y: canvasSize / 2 };
                     }
-                     // Reposition ghosts proportionally (optional, simple approach)
                      ghosts.forEach(ghost => {
-                         // This is a basic repositioning, might need refinement
                          ghost.x = (ghost.x / (canvas.width / size)) * size;
                          ghost.y = (ghost.y / (canvas.height / size)) * size;
                      });
-                    draw(); // Redraw with new dimensions
+                    draw();
                 } else if (!animationFrameId && !isGameOver) {
                     // If game hasn't started or is being initialized, redraw the static scene
-                     playerPos = { x: canvasSize / 2, y: canvasSize / 2 }; // Keep player centered
+                     playerPos = { x: canvasSize / 2, y: canvasSize / 2 };
                      drawGameArea();
-                     drawPacman(playerPos.x, playerPos.y);
+                     if(playerPos) drawPacman(playerPos.x, playerPos.y); // Draw only if playerPos exists
                 }
             }
         }
 
         // --- Game Logic ---
         function startGame() {
+             console.log("--- startGame: Start ---");
             // ** Check for Secure Context (HTTPS) **
             if (!window.isSecureContext) {
                 messageEl.innerHTML = 'Error: GPS requires a secure connection (HTTPS). Load this page via https://';
-                console.warn("Geolocation API called from non-secure context.");
-                // Optionally disable start button if not secure?
-                // startButton.disabled = true;
-                return;
+                console.warn("startGame: Geolocation API called from non-secure context.");
+                return; // Stop execution
             }
+             console.log("startGame: Context is secure (HTTPS).");
 
             if (!navigator.geolocation) {
                 messageEl.textContent = 'Error: Geolocation is not supported by your browser.';
-                return;
+                 console.error("startGame: Geolocation not supported.");
+                return; // Stop execution
             }
+             console.log("startGame: Geolocation is supported.");
 
             messageEl.textContent = 'Requesting GPS access...';
-            startButton.classList.add('hidden');
+            startButton.classList.add('hidden'); // Hide start button immediately
+            startButton.disabled = true; // Disable start button while starting
             safetyWarning.classList.remove('hidden'); // Show safety warning
+             console.log("startGame: UI updated for GPS request.");
 
             // Get initial position to set origin
-            console.log("Requesting current position...");
+            console.log("startGame: Requesting current position...");
             navigator.geolocation.getCurrentPosition(
                 (position) => {
-                    console.log("Initial position received:", position);
+                    console.log("startGame: Initial position received:", position);
                     setOrigin(position);
                     messageEl.textContent = 'GPS acquired! Walk around to move Pac-Man.';
-                    resetOriginButton.classList.remove('hidden');
+                    resetOriginButton.classList.remove('hidden'); // Show reset button
+                    resetOriginButton.disabled = false; // Ensure reset button is enabled
 
                     // Start watching position
-                    console.log("Starting GPS watch...");
+                    console.log("startGame: Starting GPS watch...");
+                    if (watchId) navigator.geolocation.clearWatch(watchId); // Clear previous watch just in case
                     watchId = navigator.geolocation.watchPosition(
                         handlePositionUpdate,
                         handleGpsError,
                         gpsOptions
                     );
+                     console.log("startGame: GPS watch started with ID:", watchId);
 
                     // Initialize ghosts
                     createGhosts();
 
                     // Start the game loop
                     if (animationFrameId) cancelAnimationFrame(animationFrameId); // Clear previous loop if any
-                    isGameOver = false;
-                    console.log("Starting game loop...");
+                    isGameOver = false; // Ensure game is not over
+                    console.log("startGame: Starting game loop...");
                     gameLoop();
                 },
                 (error) => {
                     // Error during initial getCurrentPosition
-                    console.error("Error getting initial position:", error);
+                    console.error("startGame: Error getting initial position:", error);
                     handleGpsError(error); // Use the common error handler
-                    startButton.classList.remove('hidden'); // Show start button again on error
+                    // Ensure UI reflects failure state
+                    startButton.classList.remove('hidden'); // Show start button again
+                    startButton.disabled = false; // Re-enable start button
                     safetyWarning.classList.add('hidden');
                     resetOriginButton.classList.add('hidden'); // Ensure reset is hidden
                 },
@@ -301,24 +330,30 @@
             };
             currentCoords = { ...originCoords }; // Start at origin
             playerPos = { x: canvasSize / 2, y: canvasSize / 2 }; // Center Pac-Man initially
-            console.log('Origin set:', originCoords);
+            console.log('setOrigin: Origin set:', originCoords);
              messageEl.textContent = 'Origin set! Walk around.';
         }
 
         function resetOrigin() {
+             console.log("--- resetOrigin: Start ---");
              messageEl.textContent = 'Attempting to reset origin...';
+             resetOriginButton.disabled = true; // Disable button while resetting
              // Always try to get a fresh position for resetting
              navigator.geolocation.getCurrentPosition(
                  (position) => {
-                     console.log("Position received for reset:", position);
+                     console.log("resetOrigin: Position received for reset:", position);
                      setOrigin(position); // Reuse setOrigin function
                      messageEl.textContent = 'Origin reset to current location.';
+                     resetOriginButton.disabled = false; // Re-enable button
+                     console.log("resetOrigin: Success.");
                  },
                  (error) => {
-                     console.error("Error getting position for reset:", error);
+                     console.error("resetOrigin: Error getting position for reset:", error);
                      handleGpsError(error); // Handle error
                      // Provide feedback that reset failed
-                     messageEl.textContent = 'Failed to reset origin. ' + messageEl.textContent;
+                     messageEl.textContent = 'Failed to reset origin. ' + messageEl.textContent; // Append to existing error msg
+                     resetOriginButton.disabled = false; // Re-enable button even on failure
+                     console.log("resetOrigin: Failed.");
                  },
                  gpsOptions // Use same options
              );
@@ -337,7 +372,6 @@
             }
              // Display accuracy for debugging/info - update less frequently?
              if (position.coords.accuracy && frameCount % 60 === 0) { // Update accuracy message once per second approx
-                 // Keep the main message unless accuracy is poor
                  let accuracyMsg = `GPS Accuracy: ${position.coords.accuracy.toFixed(1)}m`;
                  if (messageEl.textContent.startsWith('Origin set') || messageEl.textContent.startsWith('GPS Accuracy')) {
                       messageEl.textContent = accuracyMsg;
@@ -369,13 +403,14 @@
         }
 
         function handleGpsError(error) {
+             console.log("--- handleGpsError: Start ---", error.code, error.message);
             let msg = 'GPS Error: ';
             switch (error.code) {
                 case error.PERMISSION_DENIED:
-                    msg += 'Permission denied. Please check browser and OS settings (Settings > Privacy & Security > Location Services) and ensure HTTPS is used.';
+                    msg += 'Permission denied. Check browser/OS settings (Settings > Privacy > Location Services) & ensure HTTPS.';
                     break;
                 case error.POSITION_UNAVAILABLE:
-                    msg += 'Location unavailable. Check signal or device settings.';
+                    msg += 'Location unavailable. Check signal/device settings.';
                     break;
                 case error.TIMEOUT:
                     msg += 'Request timed out. Try again.';
@@ -385,25 +420,27 @@
                     break;
             }
             messageEl.textContent = msg;
-            console.error("Detailed GPS Error:", error);
+            console.error("handleGpsError: Detailed GPS Error:", error);
 
              // Stop game if running
              if (watchId) {
                  navigator.geolocation.clearWatch(watchId);
                  watchId = null;
+                  console.log("handleGpsError: GPS watch cleared.");
              }
              if (animationFrameId) {
                  cancelAnimationFrame(animationFrameId);
                  animationFrameId = null;
-                 // Maybe draw one last frame showing the error state?
-                 // draw(); // Could be useful
+                  console.log("handleGpsError: Animation frame cancelled.");
              }
               // Reset UI to allow restarting
               startButton.classList.remove('hidden');
+              startButton.disabled = false; // Ensure start button is usable
               resetOriginButton.classList.add('hidden');
               safetyWarning.classList.add('hidden');
               // Don't show game over screen for GPS errors
               gameOverScreen.classList.add('hidden');
+              console.log("--- handleGpsError: Finished ---");
         }
 
         // --- Distance Calculation ---
@@ -426,15 +463,14 @@
 
         // --- Ghost Logic ---
         function createGhosts() {
+             console.log("--- createGhosts: Start ---");
             ghosts = [];
              const padding = GHOST_RADIUS * 3; // Keep away from edge initially
              const quarterSize = canvasSize / 4; // Area to spawn in corners
+             const centerDistThreshold = canvasSize / 5; // Min distance from center
 
             for (let i = 0; i < NUM_GHOSTS; i++) {
-                let startX, startY;
-                // Ensure ghosts don't spawn exactly on top of initial player pos
-                const centerDistThreshold = canvasSize / 5;
-
+                let startX, startY, attempts = 0;
                 do {
                     switch(i % 4) {
                         case 0: // Top-left
@@ -454,12 +490,13 @@
                             startY = canvasSize - padding - Math.random() * quarterSize;
                             break;
                     }
-                    // Check distance from center (initial player pos)
                     const dx = startX - canvasSize / 2;
                     const dy = startY - canvasSize / 2;
                     var distFromCenter = Math.sqrt(dx*dx + dy*dy);
+                    attempts++;
+                } while (distFromCenter < centerDistThreshold && attempts < 10) // Re-roll if too close, max 10 attempts
 
-                } while (distFromCenter < centerDistThreshold) // Re-roll if too close to center
+                if (attempts >= 10) console.warn(`createGhosts: Could not place ghost ${i} far enough from center after 10 attempts.`);
 
                 ghosts.push({
                     x: startX,
@@ -469,12 +506,11 @@
                     color: GHOST_COLORS[i % GHOST_COLORS.length]
                 });
             }
-             console.log("Ghosts created:", ghosts);
+             console.log("--- createGhosts: Finished. Ghosts:", ghosts.length);
         }
 
         function updateGhosts() {
             ghosts.forEach(ghost => {
-                // Move ghost
                 ghost.x += ghost.vx;
                 ghost.y += ghost.vy;
 
@@ -494,8 +530,7 @@
                     ghost.vy *= -1;
                 }
 
-                 // Optional: Add slight random change in direction occasionally
-                 if (Math.random() < 0.01) { // 1% chance per frame
+                 if (Math.random() < 0.01) {
                      ghost.vx = (Math.random() - 0.5) * GHOST_SPEED * 2;
                      ghost.vy = (Math.random() - 0.5) * GHOST_SPEED * 2;
                  }
@@ -504,15 +539,16 @@
 
         // --- Collision Detection ---
         function checkCollisions() {
-            if (isGameOver) return; // Don't check if already over
+            if (isGameOver) return;
 
             ghosts.forEach(ghost => {
+                if (!playerPos) return; // Skip if playerPos is somehow null
                 const dx = playerPos.x - ghost.x;
                 const dy = playerPos.y - ghost.y;
                 const distance = Math.sqrt(dx * dx + dy * dy);
 
-                // Use slightly smaller radius sum for collision to feel fairer
                 if (distance < (PACMAN_RADIUS + GHOST_RADIUS) * 0.8) {
+                    console.log(`Collision detected! Player: (${playerPos.x.toFixed(1)}, ${playerPos.y.toFixed(1)}), Ghost: (${ghost.x.toFixed(1)}, ${ghost.y.toFixed(1)}), Dist: ${distance.toFixed(1)}`);
                     gameOver();
                 }
             });
@@ -522,50 +558,48 @@
             if (isGameOver) return; // Prevent multiple triggers
 
             isGameOver = true;
-            console.log("Game Over triggered.");
+            console.log("--- gameOver: Start ---");
             messageEl.textContent = 'Game Over!'; // Set final message
             gameOverScreen.classList.remove('hidden'); // Show overlay
             resetOriginButton.classList.add('hidden'); // Hide reset button
+            resetOriginButton.disabled = true; // Also disable reset button
             safetyWarning.classList.add('hidden'); // Hide warning
 
             // Stop GPS updates and game loop
             if (watchId) {
                 navigator.geolocation.clearWatch(watchId);
                 watchId = null;
-                console.log("GPS watch cleared on game over.");
+                console.log("gameOver: GPS watch cleared.");
             }
             if (animationFrameId) {
                 cancelAnimationFrame(animationFrameId);
                 animationFrameId = null;
-                console.log("Animation frame cancelled on game over.");
+                console.log("gameOver: Animation frame cancelled.");
             }
-             // Optionally draw one last frame showing Pac-Man caught?
+             // Draw final frame
              draw();
+             console.log("--- gameOver: Finished ---");
         }
 
 
         // --- Drawing ---
         function drawGameArea() {
-             // Clear background
              ctx.fillStyle = '#111';
              ctx.fillRect(0, 0, canvas.width, canvas.height);
-             // Draw border
-             ctx.strokeStyle = '#00ffff'; // Cyan border
+             ctx.strokeStyle = '#00ffff';
              ctx.lineWidth = 4;
-             ctx.strokeRect(0, 0, canvas.width, canvas.height); // Draw border rect
+             ctx.strokeRect(0, 0, canvas.width, canvas.height);
         }
 
         function drawPacman(x, y) {
-            // Animate mouth opening and closing only if game is not over
             if (!isGameOver) {
                 frameCount++;
-                if (frameCount % 15 === 0) { // Change mouth state every 15 frames
+                if (frameCount % 15 === 0) {
                     pacmanMouthOpen = !pacmanMouthOpen;
                 }
             } else {
                 pacmanMouthOpen = false; // Keep mouth closed on game over
             }
-
 
             let startAngle, endAngle;
             if (pacmanMouthOpen && !isGameOver) {
@@ -579,7 +613,7 @@
             ctx.beginPath();
             ctx.arc(x, y, PACMAN_RADIUS, startAngle, endAngle);
             if (pacmanMouthOpen && !isGameOver) {
-                 ctx.lineTo(x, y); // Draw line to center only when mouth is open
+                 ctx.lineTo(x, y);
             }
             ctx.closePath();
             ctx.fillStyle = 'yellow';
@@ -596,9 +630,9 @@
             ctx.rect(x - bodyWidth / 2, y - bodyHeight / 2 + GHOST_RADIUS * 0.2, bodyWidth, bodyHeight);
             ctx.fill();
 
-            // Head (semicircle)
+            // Head
             ctx.beginPath();
-            ctx.arc(x, y - bodyHeight / 2 + GHOST_RADIUS * 0.2, bodyWidth / 2, Math.PI, 0); // Top arc
+            ctx.arc(x, y - bodyHeight / 2 + GHOST_RADIUS * 0.2, bodyWidth / 2, Math.PI, 0);
             ctx.fill();
 
             // Eyes
@@ -607,16 +641,16 @@
             const eyeOffsetY = -GHOST_RADIUS * 0.1;
             ctx.fillStyle = 'white';
             ctx.beginPath();
-            ctx.arc(x - eyeOffsetX, y + eyeOffsetY, eyeRadius, 0, Math.PI * 2); // Left eye
-            ctx.arc(x + eyeOffsetX, y + eyeOffsetY, eyeRadius, 0, Math.PI * 2); // Right eye
+            ctx.arc(x - eyeOffsetX, y + eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+            ctx.arc(x + eyeOffsetX, y + eyeOffsetY, eyeRadius, 0, Math.PI * 2);
             ctx.fill();
 
              // Pupils
              const pupilRadius = GHOST_RADIUS * 0.1;
              ctx.fillStyle = 'black';
              ctx.beginPath();
-             ctx.arc(x - eyeOffsetX, y + eyeOffsetY, pupilRadius, 0, Math.PI * 2); // Left pupil
-             ctx.arc(x + eyeOffsetX, y + eyeOffsetY, pupilRadius, 0, Math.PI * 2); // Right pupil
+             ctx.arc(x - eyeOffsetX, y + eyeOffsetY, pupilRadius, 0, Math.PI * 2);
+             ctx.arc(x + eyeOffsetX, y + eyeOffsetY, pupilRadius, 0, Math.PI * 2);
              ctx.fill();
         }
 
@@ -634,14 +668,17 @@
             if (playerPos) {
                  drawPacman(playerPos.x, playerPos.y);
             }
-
-            // If game over, could add extra visual indication here if desired
-            // e.g., darkening the screen slightly more, drawing 'X' on Pac-Man
         }
 
         // --- Game Loop ---
         function gameLoop() {
-            if (isGameOver) return; // Should not be called if game over, but safe check
+            // Double check if game ended between frames
+            if (isGameOver) {
+                 console.log("gameLoop: Detected game is over, stopping loop.");
+                 // Ensure game over screen is visible if somehow hidden
+                 gameOverScreen.classList.remove('hidden');
+                 return;
+            }
 
             // Update game state
             updateGhosts();
@@ -653,20 +690,29 @@
             // Draw everything
             draw();
 
-            // Request next frame ONLY if game is not over
+            // Request next frame ONLY if game is not over after updates/checks
             if (!isGameOver) {
                 animationFrameId = requestAnimationFrame(gameLoop);
             } else {
-                 console.log("Game loop stopped due to game over.");
-                 // Ensure the game over screen is definitely visible
+                 console.log("gameLoop: Game over flag set, stopping loop.");
+                 // Ensure game over screen is visible
                  gameOverScreen.classList.remove('hidden');
             }
         }
 
         // --- Initial Setup ---
-        // Don't call resizeCanvas here, initGame will call it.
+        console.log("--- Running Initial Setup ---");
+        // Add CSS rule for disabled button styling dynamically
+        const styleSheet = document.styleSheets[0]; // Assumes first stylesheet is the embedded one
+        try {
+             styleSheet.insertRule('button:disabled { background-color: #777 !important; color: #ccc !important; cursor: not-allowed !important; box-shadow: 0 4px #555 !important; }', styleSheet.cssRules.length);
+             console.log("Initial Setup: Disabled button CSS rule added.");
+        } catch (e) {
+             console.error("Initial Setup: Failed to add disabled button CSS rule.", e);
+        }
+
         initGame(); // Initialize game state but don't start GPS yet
-        console.log("Initial setup complete. Waiting for Start button.");
+        console.log("--- Initial setup complete. Waiting for Start button. ---");
 
     </script>
 
