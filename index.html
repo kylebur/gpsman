@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>GPS Pac-Man (Maze Version)</title>
+    <title>GPS Pac-Man (Compass Direction)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; }
         canvas { display: block; background-color: #000; }
@@ -67,13 +67,30 @@
             text-align: center;
             display: none; /* Hidden by default */
          }
+         /* *** NEW *** Button to request permissions */
+         #start-button {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 20px 30px;
+            font-size: 20px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            z-index: 10; /* Ensure it's above canvas */
+         }
     </style>
 </head>
 <body>
+    <button id="start-button">Start Game & Allow Sensors</button>
+
     <canvas id="gameCanvas"></canvas>
 
     <div id="ui-container">
-        <div id="status">Requesting GPS permission...</div>
+        <div id="status">Press Start...</div>
         <div id="controls">
             <button id="recenterBtn">Recenter View</button>
         </div>
@@ -92,21 +109,21 @@
         const GAME_AREA_HEIGHT_METERS = GAME_AREA_HEIGHT_FEET * FEET_TO_METERS;
 
         // Maze Grid Configuration
-        const MAZE_COLS = 15; // Adjust for complexity
+        const MAZE_COLS = 15;
         const MAZE_ROWS = 15;
         const TILE_SIZE_METERS_X = GAME_AREA_WIDTH_METERS / MAZE_COLS;
         const TILE_SIZE_METERS_Y = GAME_AREA_HEIGHT_METERS / MAZE_ROWS;
 
-        const PACMAN_SIZE_FACTOR = 0.7; // Fraction of tile size
+        const PACMAN_SIZE_FACTOR = 0.7;
         const GHOST_SIZE_FACTOR = 0.65;
         const PELLET_SIZE_FACTOR = 0.15;
 
-        const GHOST_SPEED_TILES_PER_SEC = 0.6; // Speed in tiles per second
+        const GHOST_SPEED_TILES_PER_SEC = 0.6;
         const NUM_GHOSTS = 4;
         const GPS_OPTIONS = { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 };
+        const GPS_MOVE_THRESHOLD_METERS = 0.5; // *** NEW *** Minimum distance moved to trigger Pac-Man move
 
         // Maze definition (0 = Wall, 1 = Path, 2 = Pellet)
-        // Simple symmetrical example - replace with a proper maze generator for more fun
         const maze = [
             [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
             [0,2,2,2,2,2,2,0,2,2,2,2,2,2,0],
@@ -115,8 +132,8 @@
             [0,2,2,2,0,0,2,0,2,0,0,2,2,2,0],
             [0,0,0,2,0,2,2,2,2,2,0,2,0,0,0],
             [0,2,2,2,2,2,0,0,0,2,2,2,2,2,0],
-            [0,2,0,0,0,2,0,1,0,2,0,0,0,2,0], // Original center path (row 7) - now unused for start
-            [0,2,2,2,2,2,0,0,0,2,2,2,2,2,0], // Row 8
+            [0,2,0,0,0,2,0,1,0,2,0,0,0,2,0],
+            [0,2,2,2,2,2,0,0,0,2,2,2,2,2,0],
             [0,0,0,2,0,2,2,2,2,2,0,2,0,0,0], // Row 9 - PacMan starts here at [9][7] (value 2)
             [0,2,2,2,0,0,2,0,2,0,0,2,2,2,0],
             [0,2,0,0,2,2,2,2,2,2,2,0,0,2,0],
@@ -135,543 +152,307 @@
         const scoreElement = document.getElementById('score');
         const recenterBtn = document.getElementById('recenterBtn');
         const gameOverElement = document.getElementById('game-over');
+        const startButton = document.getElementById('start-button'); // *** NEW ***
 
-        let canvasWidth, canvasHeight, tileSizePixels; // Set in resize handler
+        let canvasWidth, canvasHeight, tileSizePixels;
 
         let initialLat = null, initialLon = null;
         let currentLat = null, currentLon = null;
+        let previousLat = null, previousLon = null; // *** NEW *** For calculating distance moved
 
-        // --- FIXED START POSITION ---
-        // Start Pac-Man at a known valid path location (approx center X, moved down 2 rows from center Y)
-        let pacmanGridX = Math.floor(MAZE_COLS / 2); // Center X = 7
-        let pacmanGridY = Math.floor(MAZE_ROWS / 2) + 2; // Center Y (7) + 2 = 9
+        let pacmanGridX = Math.floor(MAZE_COLS / 2);
+        let pacmanGridY = Math.floor(MAZE_ROWS / 2) + 2;
 
-        // Player's real-world position relative to start (meters) - used for TARGETING moves
-        let realWorldX_meters = 0;
-        let realWorldY_meters = 0;
+        let currentHeading = 0; // *** NEW *** Stores compass heading (degrees, 0 = North)
+        let orientationPermissionGranted = false; // *** NEW ***
 
-        // View offset in PIXELS - centers the view on Pac-Man
-        let viewOffsetX = 0;
-        let viewOffsetY = 0;
-
-        let ghosts = []; // { x: gridX, y: gridY, targetX: gridX, targetY: gridY, progress: 0, color: 'red' }
+        let viewOffsetX = 0, viewOffsetY = 0;
+        let ghosts = [];
         let score = 0;
         let isGameOver = false;
-        let gameStarted = false;
+        let gameStarted = false; // Set true when sensors are active
+        let gameLoopId = null; // *** NEW *** To store requestAnimationFrame ID
         let lastTimestamp = 0;
-        let mouthAngle = 0;
-        let mouthOpening = true;
+        // let mouthAngle = 0; // *** REMOVED *** Mouth direction now set by heading
+        // let mouthOpening = true; // *** REMOVED ***
 
         // --- Helper Functions ---
         function degreesToRadians(degrees) { return degrees * Math.PI / 180; }
-        function calculateDistance(lat1, lon1, lat2, lon2) { const R = 6371e3; const phi1 = degreesToRadians(lat1); const phi2 = degreesToRadians(lat2); const deltaPhi = degreesToRadians(lat2 - lat1); const deltaLambda = degreesToRadians(lon2 - lon1); const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) + Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2); const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); return R * c; }
-        function calculateDisplacement(startLat, startLon, currentLat, currentLon) { const N_S_dist = calculateDistance(startLat, startLon, currentLat, startLon); const E_W_dist = calculateDistance(startLat, startLon, startLat, currentLon); const deltaY_meters = (currentLat > startLat) ? N_S_dist : -N_S_dist; const deltaX_meters = (currentLon > startLon) ? E_W_dist : -E_W_dist; return { x: deltaX_meters, y: deltaY_meters }; }
+        function calculateDistance(lat1, lon1, lat2, lon2) { /* ... (same as before) ... */ const R = 6371e3; const phi1 = degreesToRadians(lat1); const phi2 = degreesToRadians(lat2); const deltaPhi = degreesToRadians(lat2 - lat1); const deltaLambda = degreesToRadians(lon2 - lon1); const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) + Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2); const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); return R * c; }
+        // function calculateDisplacement(...) { /* ... REMOVED (no longer needed directly for movement) ... */ }
+        function isWall(gridX, gridY) { if (gridX < 0 || gridX >= MAZE_COLS || gridY < 0 || gridY >= MAZE_ROWS) { return true; } return maze[gridY][gridX] === 0; }
+        function gridToCanvas(gridX, gridY) { const canvasX = gridX * tileSizePixels + tileSizePixels / 2; const canvasY = gridY * tileSizePixels + tileSizePixels / 2; return { x: canvasX, y: canvasY }; }
+        // function metersToGrid(...) { /* ... REMOVED (no longer needed for direct GPS->Grid mapping) ... */ }
 
-        function isWall(gridX, gridY) {
-            if (gridX < 0 || gridX >= MAZE_COLS || gridY < 0 || gridY >= MAZE_ROWS) {
-                return true; // Out of bounds is a wall
-            }
-            // Check the maze array for a wall (value 0)
-            return maze[gridY][gridX] === 0;
-        }
+        // *** MODIFIED *** Draw Pacman facing the current heading
+        function drawPacman(canvasX, canvasY, radius, heading) {
+            const mouthAngle = Math.PI / 7; // How wide the mouth opens
 
-        // Convert Grid coordinates to center Canvas coordinates (including view offset)
-        function gridToCanvas(gridX, gridY) {
-            // Calculate the center position of the grid cell in pixels
-            const canvasX = gridX * tileSizePixels + tileSizePixels / 2;
-            const canvasY = gridY * tileSizePixels + tileSizePixels / 2;
-            // Return the position relative to the current view offset
-            return { x: canvasX, y: canvasY };
-        }
+            ctx.save(); // Save current state
+            ctx.translate(canvasX, canvasY); // Move origin to Pac-Man's center
+            // Rotate canvas. Heading 0=North. We want 0 rotation = facing right (East).
+            // So, rotate by (heading - 90 degrees). Convert to radians.
+            ctx.rotate(degreesToRadians(heading - 90));
 
-         // Convert Real World Meters (relative to start) to Grid coordinates
-         function metersToGrid(metersX, metersY) {
-            // Calculate grid index based on meter position within the game area
-            // Add half the game area width/height to shift origin from center to top-left for calculation
-            // Divide by tile size in meters to get grid index
-            // Invert Y axis because meters increase upwards, grid Y increases downwards
-            const gridX = Math.floor((metersX + GAME_AREA_WIDTH_METERS / 2) / TILE_SIZE_METERS_X);
-            const gridY = Math.floor((-metersY + GAME_AREA_HEIGHT_METERS / 2) / TILE_SIZE_METERS_Y);
-            // Clamp coordinates to be within the maze boundaries
-            return {
-                 gridX: Math.max(0, Math.min(MAZE_COLS - 1, gridX)),
-                 gridY: Math.max(0, Math.min(MAZE_ROWS - 1, gridY))
-            };
-         }
-
-        function drawPacman(canvasX, canvasY, radius) {
-            // Animate mouth opening and closing
-            const baseAngle = Math.PI / 7; // Maximum mouth opening angle
-            if (mouthOpening) {
-                mouthAngle += 0.08; // Speed of opening
-                if (mouthAngle >= baseAngle) mouthOpening = false; // Switch direction
-            } else {
-                mouthAngle -= 0.08; // Speed of closing
-                if (mouthAngle <= 0) mouthOpening = true; // Switch direction
-            }
-
+            // Draw Pac-Man centered at the new origin (0,0), facing right
             ctx.fillStyle = 'yellow';
             ctx.beginPath();
-            // Draw Pac-Man as an arc, leaving a gap for the mouth
-            ctx.arc(canvasX, canvasY, radius, mouthAngle, Math.PI * 2 - mouthAngle);
-            // Draw a line to the center to close the shape (like a pie slice missing)
-            ctx.lineTo(canvasX, canvasY);
+            // Draw arc with mouth gap centered around the 0-angle (right)
+            ctx.arc(0, 0, radius, mouthAngle / 2, Math.PI * 2 - mouthAngle / 2);
+            ctx.lineTo(0, 0); // Line to center to close shape
             ctx.closePath();
             ctx.fill();
+
+            ctx.restore(); // Restore original canvas state (translation, rotation)
         }
 
-        function drawGhost(canvasX, canvasY, radius, color) {
-            const feet = radius * 0.4; // Height of the wavy feet
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            // Draw the semi-circular head
-            ctx.arc(canvasX, canvasY, radius, Math.PI, 0);
-            // Draw the bottom edge and wavy feet
-            ctx.lineTo(canvasX + radius, canvasY + radius); // Bottom right corner
-            // Draw wavy feet using line segments
-            ctx.lineTo(canvasX + radius * 0.66, canvasY + radius - feet);
-            ctx.lineTo(canvasX + radius * 0.33, canvasY + radius);
-            ctx.lineTo(canvasX, canvasY + radius - feet);
-            ctx.lineTo(canvasX - radius * 0.33, canvasY + radius);
-            ctx.lineTo(canvasX - radius * 0.66, canvasY + radius - feet);
-            ctx.lineTo(canvasX - radius, canvasY + radius); // Bottom left corner
-            ctx.closePath(); // Close the shape back to the start of the arc
-            ctx.fill();
+        function drawGhost(canvasX, canvasY, radius, color) { /* ... (same as before) ... */ const feet = radius * 0.4; ctx.fillStyle = color; ctx.beginPath(); ctx.arc(canvasX, canvasY, radius, Math.PI, 0); ctx.lineTo(canvasX + radius, canvasY + radius); ctx.lineTo(canvasX + radius * 0.66, canvasY + radius - feet); ctx.lineTo(canvasX + radius * 0.33, canvasY + radius); ctx.lineTo(canvasX, canvasY + radius - feet); ctx.lineTo(canvasX - radius * 0.33, canvasY + radius); ctx.lineTo(canvasX - radius * 0.66, canvasY + radius - feet); ctx.lineTo(canvasX - radius, canvasY + radius); ctx.closePath(); ctx.fill(); ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(canvasX - radius * 0.4, canvasY - radius * 0.2, radius * 0.25, 0, Math.PI * 2); ctx.arc(canvasX + radius * 0.4, canvasY - radius * 0.2, radius * 0.25, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = 'black'; ctx.beginPath(); ctx.arc(canvasX - radius * 0.4, canvasY - radius * 0.2, radius * 0.1, 0, Math.PI * 2); ctx.arc(canvasX + radius * 0.4, canvasY - radius * 0.2, radius * 0.1, 0, Math.PI * 2); ctx.fill(); }
+        function initGhosts() { /* ... (same as before) ... */ const ghostColors = ['red', 'pink', 'cyan', 'orange']; const startingPositions = [ {x: 1, y: 1}, {x: MAZE_COLS-2, y: 1}, {x: 1, y: MAZE_ROWS-2}, {x: MAZE_COLS-2, y: MAZE_ROWS-2} ]; ghosts = []; for (let i = 0; i < NUM_GHOSTS; i++) { let startX = startingPositions[i % startingPositions.length].x; let startY = startingPositions[i % startingPositions.length].y; let attempts = 0; while(isWall(startX, startY) && attempts < MAZE_COLS * MAZE_ROWS) { startX++; if (startX >= MAZE_COLS) { startX = 1; startY++; if (startY >= MAZE_ROWS) startY = 1; } attempts++; } if (isWall(startX, startY)) { console.error(`Could not find valid starting tile for ghost ${i}`); startX = 1; startY = 1; } ghosts.push({ x: startX, y: startY, targetX: startX, targetY: startY, progress: 0, color: ghostColors[i % ghostColors.length] }); } }
+        function updateGhosts(deltaTime) { /* ... (same as before) ... */ const moveAmount = GHOST_SPEED_TILES_PER_SEC * deltaTime; ghosts.forEach(ghost => { ghost.progress += moveAmount; if (ghost.progress >= 1) { ghost.x = ghost.targetX; ghost.y = ghost.targetY; ghost.progress = 0; const dx = pacmanGridX - ghost.x; const dy = pacmanGridY - ghost.y; let possibleMoves = []; if (!isWall(ghost.x, ghost.y - 1)) possibleMoves.push({ x: 0, y: -1, weight: -dy }); if (!isWall(ghost.x, ghost.y + 1)) possibleMoves.push({ x: 0, y: 1, weight: dy }); if (!isWall(ghost.x - 1, ghost.y)) possibleMoves.push({ x: -1, y: 0, weight: -dx }); if (!isWall(ghost.x + 1, ghost.y)) possibleMoves.push({ x: 1, y: 0, weight: dx }); possibleMoves.sort((a, b) => b.weight - a.weight); let bestMove = { x: 0, y: 0 }; if (possibleMoves.length > 0) { bestMove = possibleMoves[0]; if (possibleMoves.length > 1 && Math.random() < 0.2) { bestMove = possibleMoves[1]; } } ghost.targetX = ghost.x + bestMove.x; ghost.targetY = ghost.y + bestMove.y; } }); }
+        function checkCollisions() { /* ... (same as before) ... */ ghosts.forEach(ghost => { if ((pacmanGridX === ghost.x && pacmanGridY === ghost.y) || (pacmanGridX === ghost.targetX && pacmanGridY === ghost.targetY)) { isGameOver = true; gameOverElement.textContent = "GAME OVER!"; gameOverElement.style.color = "red"; gameOverElement.style.display = 'block'; } }); if (!isGameOver && maze[pacmanGridY][pacmanGridX] === 2) { maze[pacmanGridY][pacmanGridX] = 1; score++; totalPellets--; scoreElement.textContent = `Score: ${score}`; if (totalPellets <= 0) { isGameOver = true; gameOverElement.textContent = "YOU WIN!"; gameOverElement.style.color = "yellow"; gameOverElement.style.display = 'block'; } } }
 
-            // Draw Eyes
-            ctx.fillStyle = 'white'; // White part of the eyes
-            ctx.beginPath();
-            // Left eye white
-            ctx.arc(canvasX - radius * 0.4, canvasY - radius * 0.2, radius * 0.25, 0, Math.PI * 2);
-            // Right eye white
-            ctx.arc(canvasX + radius * 0.4, canvasY - radius * 0.2, radius * 0.25, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = 'black'; // Black pupils
-            ctx.beginPath();
-            // Left pupil
-            ctx.arc(canvasX - radius * 0.4, canvasY - radius * 0.2, radius * 0.1, 0, Math.PI * 2);
-             // Right pupil
-            ctx.arc(canvasX + radius * 0.4, canvasY - radius * 0.2, radius * 0.1, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        // --- Sensor Handling ---
 
-        function initGhosts() {
-             const ghostColors = ['red', 'pink', 'cyan', 'orange'];
-             // Define specific valid starting tiles for ghosts, spread out
-             const startingPositions = [
-                {x: 1, y: 1}, // Top Left
-                {x: MAZE_COLS-2, y: 1}, // Top Right
-                {x: 1, y: MAZE_ROWS-2}, // Bottom Left
-                {x: MAZE_COLS-2, y: MAZE_ROWS-2} // Bottom Right
-             ];
-             ghosts = []; // Clear existing ghosts
-             for (let i = 0; i < NUM_GHOSTS; i++) {
-                 let startX = startingPositions[i % startingPositions.length].x;
-                 let startY = startingPositions[i % startingPositions.length].y;
-
-                 // Double-check if the chosen start tile is valid, fallback if not
-                 let attempts = 0;
-                 while(isWall(startX, startY) && attempts < MAZE_COLS * MAZE_ROWS) {
-                     // Simple fallback: try moving right, then down row by row
-                     startX++;
-                     if (startX >= MAZE_COLS) {
-                         startX = 1;
-                         startY++;
-                         if (startY >= MAZE_ROWS) startY = 1; // Wrap around Y
-                     }
-                     attempts++;
-                 }
-                 // If still stuck after many attempts, log an error
-                 if (isWall(startX, startY)) {
-                     console.error(`Could not find valid starting tile for ghost ${i}`);
-                     startX = 1; startY = 1; // Default to top-left corner as last resort
-                 }
-
-                 ghosts.push({
-                    x: startX, // Current grid X
-                    y: startY, // Current grid Y
-                    targetX: startX, // Target grid X (initially same as current)
-                    targetY: startY, // Target grid Y (initially same as current)
-                    progress: 0, // Progress moving towards target (0 to 1)
-                    color: ghostColors[i % ghostColors.length] // Assign color
-                 });
-             }
-        }
-
-         function updateGhosts(deltaTime) {
-            // Calculate how much progress a ghost makes towards its target tile in this frame
-            const moveAmount = GHOST_SPEED_TILES_PER_SEC * deltaTime;
-
-            ghosts.forEach(ghost => {
-                 // Increase progress towards the target tile
-                 ghost.progress += moveAmount;
-
-                 // If ghost has reached or passed its target tile
-                 if (ghost.progress >= 1) {
-                     // Snap ghost to the target tile
-                     ghost.x = ghost.targetX;
-                     ghost.y = ghost.targetY;
-                     ghost.progress = 0; // Reset progress for the next move
-
-                     // --- Ghost AI: Decide next move ---
-                     const dx = pacmanGridX - ghost.x; // Difference in X grid coords to Pac-Man
-                     const dy = pacmanGridY - ghost.y; // Difference in Y grid coords to Pac-Man
-
-                     let possibleMoves = [];
-                     // Check potential moves (Up, Down, Left, Right) and if they are valid paths
-                     if (!isWall(ghost.x, ghost.y - 1)) possibleMoves.push({ x: 0, y: -1, weight: -dy }); // Up (prefer if PacMan is above)
-                     if (!isWall(ghost.x, ghost.y + 1)) possibleMoves.push({ x: 0, y: 1, weight: dy });  // Down (prefer if PacMan is below)
-                     if (!isWall(ghost.x - 1, ghost.y)) possibleMoves.push({ x: -1, y: 0, weight: -dx });// Left (prefer if PacMan is left)
-                     if (!isWall(ghost.x + 1, ghost.y)) possibleMoves.push({ x: 1, y: 0, weight: dx }); // Right (prefer if PacMan is right)
-
-                     // Basic AI: Prefer moves that reduce distance to Pac-Man (higher weight)
-                     possibleMoves.sort((a, b) => b.weight - a.weight);
-
-                     let bestMove = { x: 0, y: 0 }; // Default: stay put if no valid moves
-                     if (possibleMoves.length > 0) {
-                         // Choose the best valid direction towards Pac-Man
-                         bestMove = possibleMoves[0];
-                         // Add randomness: Occasionally choose the second-best move if available
-                         if (possibleMoves.length > 1 && Math.random() < 0.2) { // 20% chance to pick 2nd best
-                             bestMove = possibleMoves[1];
-                         }
-                     }
-
-                     // Set the next target tile based on the chosen move
-                     ghost.targetX = ghost.x + bestMove.x;
-                     ghost.targetY = ghost.y + bestMove.y;
-                 }
-             });
-         }
-
-
-         function checkCollisions() {
-             // Pac-Man vs Ghosts Collision Check
-             ghosts.forEach(ghost => {
-                 // Check if Pac-Man occupies the same grid cell as the ghost's current or target cell
-                 // This provides a slightly more lenient collision detection
-                 if ((pacmanGridX === ghost.x && pacmanGridY === ghost.y) ||
-                     (pacmanGridX === ghost.targetX && pacmanGridY === ghost.targetY))
-                 {
-                     isGameOver = true; // Set game over flag
-                     gameOverElement.textContent = "GAME OVER!"; // Set message
-                     gameOverElement.style.color = "red"; // Set color
-                     gameOverElement.style.display = 'block'; // Show game over message
-                 }
-             });
-
-             // Pac-Man vs Pellets Collision Check
-             // Check if Pac-Man's current grid cell contains a pellet
-             if (maze[pacmanGridY][pacmanGridX] === 2) {
-                 maze[pacmanGridY][pacmanGridX] = 1; // Change pellet tile to empty path tile
-                 score++; // Increment score
-                 totalPellets--; // Decrement remaining pellet count
-                 scoreElement.textContent = `Score: ${score}`; // Update score display
-
-                 // Check for win condition (all pellets eaten)
-                 if (totalPellets <= 0) {
-                    isGameOver = true; // Set game over flag (for winning)
-                    gameOverElement.textContent = "YOU WIN!"; // Set win message
-                    gameOverElement.style.color = "yellow"; // Set win color
-                    gameOverElement.style.display = 'block'; // Show win message
-                 }
-             }
-         }
-
-        // --- GPS Handling ---
-        function handleInitialPosition(position) {
-            initialLat = position.coords.latitude;
-            initialLon = position.coords.longitude;
-            currentLat = initialLat;
-            currentLon = initialLon;
-            statusElement.textContent = "GPS Locked! Walk to move.";
-            console.log("Initial Position:", initialLat, initialLon);
-
-            // Check if the explicitly set start position is valid (should be (7,9) which is maze[9][7]=2)
-             if (isWall(pacmanGridX, pacmanGridY)) {
-                console.error(`FATAL: Explicit start position (${pacmanGridX}, ${pacmanGridY}) is a wall! Check maze definition.`);
-                statusElement.textContent = "Error: Invalid start position in maze!";
-                statusElement.style.color = "red";
-                isGameOver = true; // Prevent game from starting if spawn is bad
-                return; // Stop initialization
+        // *** NEW *** Handle Device Orientation updates
+        function handleOrientation(event) {
+            let heading = null;
+            // Prefer webkitCompassHeading for iOS Safari if available
+            if (event.webkitCompassHeading) {
+                heading = event.webkitCompassHeading;
+            } else if (event.alpha !== null) {
+                // Use alpha, adjusting for device orientation (absolute mode is better if available)
+                // This might need calibration or adjustment depending on device/browser
+                // Assuming event.absolute === true or using deviceorientationabsolute event
+                heading = event.alpha;
+                // Simple correction attempt if alpha is relative (0 = direction at page load)
+                // This is unreliable without more context/calibration
+                // if (!event.absolute) { heading = (360 - heading); } // Example adjustment
             }
 
-            initGhosts(); // Initialize ghosts after confirming valid Pac-Man start
-            gameStarted = true;
-            lastTimestamp = performance.now();
-            resizeCanvas(); // Recalculate sizes after start potentially affects tileSizePixels
-            gameLoop(); // Start the main game loop
-
-            // Start watching for continuous GPS updates
-            navigator.geolocation.watchPosition(handlePositionUpdate, handleError, GPS_OPTIONS);
-            // Add listener for the recenter button
-            recenterBtn.addEventListener('click', recenterView);
+            if (heading !== null) {
+                // Make North 0 degrees, East 90, etc.
+                // webkitCompassHeading is usually 0=North already.
+                // Alpha might be 0=North or 0=East depending on browser/mode. Assuming 0=North for now.
+                currentHeading = heading;
+                 // Optional: Update status for debugging
+                 // statusElement.textContent = `Heading: ${currentHeading.toFixed(1)}°`;
+            }
         }
 
+        // *** MODIFIED *** Handle GPS updates - now calculates distance and triggers move based on heading
         function handlePositionUpdate(position) {
-            // Ignore updates if game hasn't started, is over, or initial position isn't set
-            if (!initialLat || isGameOver || !gameStarted) return;
+            if (isGameOver || !gameStarted) return;
 
-            // Update current latitude and longitude from GPS data
             currentLat = position.coords.latitude;
             currentLon = position.coords.longitude;
-            const accuracy = position.coords.accuracy; // GPS accuracy in meters
+            const accuracy = position.coords.accuracy;
 
-            // Calculate real-world displacement (in meters) from the starting GPS point
-            const displacement = calculateDisplacement(initialLat, initialLon, currentLat, currentLon);
-            realWorldX_meters = displacement.x;
-            realWorldY_meters = displacement.y;
-
-             // Determine the TARGET grid cell based on the real-world meter position
-            const { gridX: targetGridX, gridY: targetGridY } = metersToGrid(realWorldX_meters, realWorldY_meters);
-
-            // Calculate the difference between the target grid cell and Pac-Man's current grid cell
-            const deltaGridX = targetGridX - pacmanGridX;
-            const deltaGridY = targetGridY - pacmanGridY;
-
-            // Determine the single intended move direction (horizontal or vertical) based on the larger displacement
-            let intendedMoveX = 0;
-            let intendedMoveY = 0;
-
-            if (Math.abs(deltaGridX) > Math.abs(deltaGridY)) {
-                // If horizontal displacement is greater, intend to move horizontally
-                intendedMoveX = Math.sign(deltaGridX);
-            } else if (Math.abs(deltaGridY) > 0) {
-                 // If vertical displacement is greater (or equal and non-zero), intend to move vertically
-                intendedMoveY = Math.sign(deltaGridY);
-            } else if (Math.abs(deltaGridX) > 0) {
-                 // If vertical displacement is zero, but horizontal is non-zero, intend to move horizontally
-                 intendedMoveX = Math.sign(deltaGridX);
+            let distanceMoved = 0;
+            if (previousLat !== null && previousLon !== null) {
+                // Calculate distance moved since last update
+                distanceMoved = calculateDistance(previousLat, previousLon, currentLat, currentLon);
             }
-            // If both deltaGridX and deltaGridY are 0, no intended move (intendedMoveX/Y remain 0)
 
-            // --- Attempt to move Pac-Man based on intended direction ---
-            // Try the primary intended direction first
-            if (intendedMoveX !== 0 && !isWall(pacmanGridX + intendedMoveX, pacmanGridY)) {
-                // If intending to move horizontally and the way is clear, move horizontally
-                pacmanGridX += intendedMoveX;
-            } else if (intendedMoveY !== 0 && !isWall(pacmanGridX, pacmanGridY + intendedMoveY)) {
-                 // If intending to move vertically (and horizontal wasn't possible/intended) and the way is clear, move vertically
-                pacmanGridY += intendedMoveY;
-            }
-            // Allow correcting for diagonal GPS drift if the primary direction was blocked:
-            // If primary horizontal move was blocked, but vertical move was also intended (diagonal GPS input) and is possible
-            else if (intendedMoveX !== 0 && intendedMoveY !== 0 && !isWall(pacmanGridX, pacmanGridY + intendedMoveY)) {
-                 pacmanGridY += intendedMoveY;
-            }
-            // If primary vertical move was blocked, but horizontal move was also intended (diagonal GPS input) and is possible
-            else if (intendedMoveY !== 0 && intendedMoveX !== 0 && !isWall(pacmanGridX + intendedMoveX, pacmanGridY)) {
-                 pacmanGridX += intendedMoveX;
-            }
-            // If no move is possible or intended, Pac-Man stays in the current grid cell (pacmanGridX/Y are unchanged)
+            // Update previous position for next calculation
+            previousLat = currentLat;
+            previousLon = currentLon;
 
-            updateStatus(accuracy); // Update the status display with GPS accuracy
+            // --- Trigger Pac-Man move if distance threshold met ---
+            if (distanceMoved > GPS_MOVE_THRESHOLD_METERS) {
+                // Convert heading to radians (0 North, 90 East)
+                const angleRad = degreesToRadians(currentHeading);
+
+                // Calculate direction vector components (dx, dy)
+                // sin(0)=0, cos(0)=1 -> North = (0, -1)
+                // sin(90)=1, cos(90)=0 -> East = (1, 0)
+                // sin(180)=0, cos(180)=-1 -> South = (0, 1)
+                // sin(270)=-1, cos(270)=0 -> West = (-1, 0)
+                const dirX = Math.sin(angleRad);
+                const dirY = -Math.cos(angleRad); // Negative because grid Y increases downwards
+
+                // Determine intended grid move based on the dominant direction component
+                let intendedMoveX = 0;
+                let intendedMoveY = 0;
+                if (Math.abs(dirX) > Math.abs(dirY)) {
+                    intendedMoveX = Math.sign(dirX); // Move horizontally
+                } else {
+                    intendedMoveY = Math.sign(dirY); // Move vertically (or stay if dirY is 0)
+                }
+                // Ensure at least one component is non-zero if direction is not exactly diagonal
+                 if (intendedMoveX === 0 && intendedMoveY === 0 && (Math.abs(dirX) > 0.01 || Math.abs(dirY) > 0.01)) {
+                     // Handle cases near 45 deg where both components might be small but non-zero
+                     if (Math.abs(dirX) > Math.abs(dirY)) intendedMoveX = Math.sign(dirX);
+                     else intendedMoveY = Math.sign(dirY);
+                 }
+
+
+                // Check if the intended move is valid (not into a wall)
+                const nextGridX = pacmanGridX + intendedMoveX;
+                const nextGridY = pacmanGridY + intendedMoveY;
+
+                if (!isWall(nextGridX, nextGridY)) {
+                    // Move Pac-Man one tile in the intended direction
+                    pacmanGridX = nextGridX;
+                    pacmanGridY = nextGridY;
+                }
+                // Optional: Could add logic here to try the secondary direction if the primary was blocked.
+            }
+
+            updateStatus(accuracy); // Update status display
         }
 
-        function handleError(error) {
-            console.error("GPS Error:", error);
-            let message = "GPS Error: ";
-            switch (error.code) {
-                case error.PERMISSION_DENIED: message += "Permission denied."; break;
-                case error.POSITION_UNAVAILABLE: message += "Location unavailable."; break;
-                case error.TIMEOUT: message += "Timeout."; break;
-                default: message += "Unknown error."; break;
-            }
-            statusElement.textContent = message;
-            statusElement.style.color = 'red';
-            isGameOver = true; // Stop the game if GPS fails critically
-            gameOverElement.textContent = "GPS FAILED!"; // Display error message
-            gameOverElement.style.display = 'block';
-        }
-
-        function updateStatus(accuracy = null) {
-            if (isGameOver) return; // Don't update status if game is over
-            if (!gameStarted) {
-                 statusElement.textContent = "Waiting for GPS...";
-                 return;
-            }
-            // Display GPS accuracy if available
-            let statusText = `GPS Acc: ${accuracy?.toFixed(1) ?? '?'}m`;
-            // Optional: Display grid coordinates for debugging
-            // statusText += ` | Grid: ${pacmanGridX},${pacmanGridY}`;
-            statusElement.textContent = statusText;
-            statusElement.style.color = '#lime'; // Green color for normal status
-        }
-
+        function handleGpsError(error) { /* ... (same as before) ... */ console.error("GPS Error:", error); let message = "GPS Error: "; switch (error.code) { case error.PERMISSION_DENIED: message += "Permission denied."; break; case error.POSITION_UNAVAILABLE: message += "Location unavailable."; break; case error.TIMEOUT: message += "Timeout."; break; default: message += "Unknown error."; break; } statusElement.textContent = message; statusElement.style.color = 'red'; isGameOver = true; gameOverElement.textContent = "GPS FAILED!"; gameOverElement.style.display = 'block'; }
+        function updateStatus(accuracy = null) { /* ... (mostly same as before, maybe add heading) ... */ if (isGameOver) return; if (!gameStarted) { statusElement.textContent = "Initializing..."; return; } let statusText = `GPS Acc: ${accuracy?.toFixed(1) ?? '?'}m | Head: ${currentHeading.toFixed(0)}°`; statusElement.textContent = statusText; statusElement.style.color = '#lime'; }
 
         // --- Drawing ---
-        function drawMaze() {
-            const wallColor = '#0000AA'; // Dark Blue for walls
-            const pathColor = '#000';   // Black for empty paths (matches background)
-            const pelletColor = '#FFFF88'; // Yellowish for pellets
-
-            // Iterate over each cell in the maze grid
-            for (let y = 0; y < MAZE_ROWS; y++) {
-                for (let x = 0; x < MAZE_COLS; x++) {
-                    // Get the canvas coordinates for the center of the current grid cell
-                    const { x: canvasX, y: canvasY } = gridToCanvas(x, y);
-                     // Calculate the top-left corner coordinates for drawing the tile rectangle
-                    const tileDrawX = canvasX - tileSizePixels / 2;
-                    const tileDrawY = canvasY - tileSizePixels / 2;
-
-                    // Check the type of tile in the maze definition
-                    if (maze[y][x] === 0) { // Wall tile
-                        ctx.fillStyle = wallColor;
-                        ctx.fillRect(tileDrawX, tileDrawY, tileSizePixels, tileSizePixels);
-                    } else { // Path tile (either empty or with a pellet)
-                        // Draw the path background (black) first
-                        ctx.fillStyle = pathColor;
-                        ctx.fillRect(tileDrawX, tileDrawY, tileSizePixels, tileSizePixels);
-                        // If it's a pellet tile (value 2), draw the pellet on top
-                        if (maze[y][x] === 2) {
-                            ctx.fillStyle = pelletColor;
-                            ctx.beginPath();
-                            // Draw the pellet as a small circle in the center of the tile
-                            ctx.arc(canvasX, canvasY, tileSizePixels * PELLET_SIZE_FACTOR, 0, Math.PI * 2);
-                            ctx.fill();
-                        }
-                    }
-                }
-            }
-        }
-
-        function recenterView() {
-             // This function doesn't need to do much now, as the view offset
-             // calculation in draw() automatically tries to center Pac-Man.
-             // We can just provide feedback to the user.
-             statusElement.textContent = "View adjusted";
-             // Reset status message after a short delay
-             setTimeout(() => updateStatus(), 2000);
-        }
+        function drawMaze() { /* ... (same as before) ... */ const wallColor = '#0000AA'; const pathColor = '#000'; const pelletColor = '#FFFF88'; for (let y = 0; y < MAZE_ROWS; y++) { for (let x = 0; x < MAZE_COLS; x++) { const { x: canvasX, y: canvasY } = gridToCanvas(x, y); const tileDrawX = canvasX - tileSizePixels / 2; const tileDrawY = canvasY - tileSizePixels / 2; if (maze[y][x] === 0) { ctx.fillStyle = wallColor; ctx.fillRect(tileDrawX, tileDrawY, tileSizePixels, tileSizePixels); } else { ctx.fillStyle = pathColor; ctx.fillRect(tileDrawX, tileDrawY, tileSizePixels, tileSizePixels); if (maze[y][x] === 2) { ctx.fillStyle = pelletColor; ctx.beginPath(); ctx.arc(canvasX, canvasY, tileSizePixels * PELLET_SIZE_FACTOR, 0, Math.PI * 2); ctx.fill(); } } } } }
+        function recenterView() { /* ... (same as before) ... */ statusElement.textContent = "View adjusted"; setTimeout(() => updateStatus(), 2000); }
 
         // --- Game Loop ---
-        function update(deltaTime) {
-            // Only update game state if the game is running
-            if (isGameOver || !gameStarted) return;
-            // Update ghost positions and AI
-            updateGhosts(deltaTime);
-            // Check for collisions between Pac-Man and ghosts/pellets
-            checkCollisions();
-        }
+        function update(deltaTime) { if (isGameOver || !gameStarted) return; updateGhosts(deltaTime); checkCollisions(); }
 
         function draw() {
-            // --- Calculate View Offset ---
-            // Get the ideal canvas position where Pac-Man should be drawn
             const { x: pacmanCanvasCenterX, y: pacmanCanvasCenterY } = gridToCanvas(pacmanGridX, pacmanGridY);
-            // Calculate the desired offset to center Pac-Man on the screen
-            // This is the difference between Pac-Man's position and the screen center
             const targetOffsetX = pacmanCanvasCenterX - canvasWidth / 2;
             const targetOffsetY = pacmanCanvasCenterY - canvasHeight / 2;
-            // Smoothly interpolate the current view offset towards the target offset
-            // This creates a smooth camera follow effect
-            viewOffsetX += (targetOffsetX - viewOffsetX) * 0.1; // Adjust 0.1 for different follow speeds
+            viewOffsetX += (targetOffsetX - viewOffsetX) * 0.1;
             viewOffsetY += (targetOffsetY - viewOffsetY) * 0.1;
 
-            // --- Clear Canvas ---
-            // Clear the entire canvas with the background color
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-            // --- Draw Initializing Message ---
-            // If the game hasn't started yet (waiting for GPS) and isn't game over
             if (!gameStarted && !isGameOver) {
-                ctx.fillStyle = 'white'; ctx.font = '20px sans-serif'; ctx.textAlign = 'center';
-                // Display a message indicating the game is waiting for GPS lock
-                ctx.fillText('Waiting for GPS Lock...', canvasWidth / 2, canvasHeight / 2);
-                return; // Stop drawing further elements until game starts
+                 // Keep showing "Initializing..." or error until started
+                 ctx.fillStyle = 'white'; ctx.font = '20px sans-serif'; ctx.textAlign = 'center';
+                 ctx.fillText(statusElement.textContent, canvasWidth / 2, canvasHeight / 2); // Show status msg
+                 return;
             }
 
-            // --- Draw Game World Elements (relative to view offset) ---
-            ctx.save(); // Save the current canvas state (transformation matrix)
-            // Apply the view offset transformation: translate the canvas so the world appears shifted
+            ctx.save();
             ctx.translate(-viewOffsetX, -viewOffsetY);
-
-            // Draw the maze (walls, paths, pellets)
             drawMaze();
-
-            // Draw Ghosts (interpolating position for smooth movement between tiles)
             const ghostRadius = tileSizePixels * GHOST_SIZE_FACTOR / 2;
-            ghosts.forEach(ghost => {
-                // Get canvas coordinates for the ghost's current and target tiles
-                const { x: startX, y: startY } = gridToCanvas(ghost.x, ghost.y);
-                const { x: endX, y: endY } = gridToCanvas(ghost.targetX, ghost.targetY);
-                // Calculate the interpolated position based on the ghost's progress towards the target
-                const currentX = startX + (endX - startX) * ghost.progress;
-                const currentY = startY + (endY - startY) * ghost.progress;
-                // Draw the ghost at the interpolated position
-                drawGhost(currentX, currentY, ghostRadius, ghost.color);
-            });
-
-            // Draw Pac-Man at his current grid position's center
-            // Note: We use gridToCanvas which inherently includes the view offset calculation done earlier
+            ghosts.forEach(ghost => { const { x: startX, y: startY } = gridToCanvas(ghost.x, ghost.y); const { x: endX, y: endY } = gridToCanvas(ghost.targetX, ghost.targetY); const currentX = startX + (endX - startX) * ghost.progress; const currentY = startY + (endY - startY) * ghost.progress; drawGhost(currentX, currentY, ghostRadius, ghost.color); });
+            // *** MODIFIED *** Pass heading to drawPacman
             const { x: finalPacmanX, y: finalPacmanY } = gridToCanvas(pacmanGridX, pacmanGridY);
             const pacmanRadius = tileSizePixels * PACMAN_SIZE_FACTOR / 2;
-            drawPacman(finalPacmanX, finalPacmanY, pacmanRadius);
-
-            ctx.restore(); // Restore the canvas state (remove the view offset transformation)
-
-            // UI elements (Score, Status, Game Over message) are handled by HTML elements, not drawn on canvas here.
+            drawPacman(finalPacmanX, finalPacmanY, pacmanRadius, currentHeading);
+            ctx.restore();
         }
 
         function gameLoop(timestamp) {
-             // Initialize lastTimestamp on the first frame
              if (!lastTimestamp) lastTimestamp = timestamp;
-             // Calculate delta time (time elapsed since the last frame) in seconds
-             // Handle potential NaN on the very first frame by defaulting to 0
              const deltaTime = (timestamp - lastTimestamp) / 1000 || 0;
-             lastTimestamp = timestamp; // Update lastTimestamp for the next frame
-
-             // Update game logic only if the game has started and is not over
-             if (gameStarted && !isGameOver) {
-                 update(deltaTime);
-             }
-             // Draw the game state (always draw, even if game over, to show the final state/message)
+             lastTimestamp = timestamp;
+             if (gameStarted && !isGameOver) { update(deltaTime); }
              draw();
-
-             // Request the next animation frame, creating the loop
-             requestAnimationFrame(gameLoop);
+             if (!isGameOver) { // *** MODIFIED *** Stop loop if game over
+                gameLoopId = requestAnimationFrame(gameLoop);
+             }
         }
 
         // --- Initialization and Resize ---
-        function resizeCanvas() {
-            // Get current window dimensions
-            canvasWidth = window.innerWidth;
-            canvasHeight = window.innerHeight;
-            // Set canvas element size
-            canvas.width = canvasWidth;
-            canvas.height = canvasHeight;
+        function resizeCanvas() { /* ... (same as before) ... */ canvasWidth = window.innerWidth; canvasHeight = window.innerHeight; canvas.width = canvasWidth; canvas.height = canvasHeight; const pixelWidthPerTile = canvasWidth / MAZE_COLS; const pixelHeightPerTile = canvasHeight / MAZE_ROWS; tileSizePixels = Math.min(pixelWidthPerTile, pixelHeightPerTile); }
 
-            // Calculate the size of each maze tile in pixels to fit the maze on screen
-            // Fit based on the dimension that is more constrained
-            const pixelWidthPerTile = canvasWidth / MAZE_COLS;
-            const pixelHeightPerTile = canvasHeight / MAZE_ROWS;
-            // Use the smaller dimension to ensure the entire maze fits without stretching tiles
-            tileSizePixels = Math.min(pixelWidthPerTile, pixelHeightPerTile);
-
-            // No need to redraw immediately, the game loop handles drawing continuously
+        // *** NEW *** Function to request permissions and start sensors
+        function requestSensorsAndStartGame() {
+            // --- Request Device Orientation ---
+            // Check if permission API exists and if we need to request
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                 DeviceOrientationEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                            orientationPermissionGranted = true;
+                            console.log("Orientation permission granted.");
+                            startGps(); // Start GPS only after orientation permission handled
+                        } else {
+                            statusElement.textContent = "Orientation permission denied.";
+                            statusElement.style.color = 'red';
+                            console.error("Orientation permission denied.");
+                            // Optionally allow game to start without compass? Or stop here.
+                            // startGps(); // Maybe start GPS anyway?
+                        }
+                    })
+                    .catch(error => {
+                         console.error("Error requesting orientation permission:", error);
+                         statusElement.textContent = "Orientation sensor error.";
+                         statusElement.style.color = 'red';
+                         // Optionally try starting GPS anyway
+                         // startGps();
+                    });
+            } else {
+                // Assume permission is not needed or granted by default (older browsers/Android)
+                console.log("Orientation permission API not found or not needed, adding listener directly.");
+                window.addEventListener('deviceorientation', handleOrientation);
+                orientationPermissionGranted = true; // Assume it works
+                startGps(); // Start GPS
+            }
         }
 
+        // *** NEW *** Function to start GPS listening
+        function startGps() {
+             statusElement.textContent = "Requesting GPS...";
+             if ('geolocation' in navigator) {
+                 navigator.geolocation.getCurrentPosition(
+                     (position) => { // Success callback for initial position
+                         initialLat = position.coords.latitude;
+                         initialLon = position.coords.longitude;
+                         previousLat = initialLat; // Initialize previous position
+                         previousLon = initialLon;
+                         currentLat = initialLat;
+                         currentLon = initialLon;
+                         statusElement.textContent = "GPS Locked! Walk to move.";
+                         console.log("Initial Position:", initialLat, initialLon);
+
+                         if (isWall(pacmanGridX, pacmanGridY)) {
+                             console.error(`FATAL: Start position (${pacmanGridX}, ${pacmanGridY}) is wall!`);
+                             statusElement.textContent = "Error: Invalid start!"; statusElement.style.color = "red";
+                             isGameOver = true; return;
+                         }
+
+                         initGhosts();
+                         gameStarted = true; // GAME STARTS HERE
+                         lastTimestamp = performance.now();
+                         resizeCanvas(); // Recalculate sizes
+                         if (gameLoopId) cancelAnimationFrame(gameLoopId); // Cancel previous loop if any
+                         gameLoopId = requestAnimationFrame(gameLoop); // Start game loop
+
+                         // Start watching for updates
+                         navigator.geolocation.watchPosition(handlePositionUpdate, handleGpsError, GPS_OPTIONS);
+                         recenterBtn.addEventListener('click', recenterView);
+
+                     },
+                     (error) => { // Error callback for initial position
+                        handleGpsError(error); // Use the same error handler
+                     },
+                     GPS_OPTIONS
+                 );
+             } else {
+                 statusElement.textContent = 'Geolocation not supported!'; statusElement.style.color = 'red';
+                 isGameOver = true; gameOverElement.textContent = "GPS NOT SUPPORTED!"; gameOverElement.style.display = 'block';
+             }
+        }
+
+
         window.onload = () => {
-            // Display initial safety warning
-            alert("SAFETY WARNING:\nPlease be constantly aware of your real-world surroundings while playing!");
-            // Set initial canvas size
+            // Don't show alert immediately, wait for start button
+            // alert("SAFETY WARNING...");
             resizeCanvas();
-            // Add event listener to resize canvas when window size changes
             window.addEventListener('resize', resizeCanvas);
 
-            // Check if Geolocation API is available in the browser
-            if ('geolocation' in navigator) {
-                // Request the initial GPS position
-                navigator.geolocation.getCurrentPosition(handleInitialPosition, handleError, GPS_OPTIONS);
-            } else {
-                // Geolocation not supported, display error and stop game
-                statusElement.textContent = 'Geolocation not supported!'; statusElement.style.color = 'red';
-                isGameOver = true;
-                gameOverElement.textContent = "GPS NOT SUPPORTED!";
-                gameOverElement.style.display = 'block';
-            }
+            // *** NEW *** Add listener to the start button
+            startButton.addEventListener('click', () => {
+                 alert("SAFETY WARNING:\nPlease be constantly aware of your real-world surroundings while playing!");
+                 startButton.style.display = 'none'; // Hide button
+                 requestSensorsAndStartGame(); // Request permissions and start
+            });
+
+             // Initial draw call to show "Press Start..." or error state
+             draw();
         };
 
     </script>
 </body>
 </html>
+
