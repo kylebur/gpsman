@@ -2,720 +2,519 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>GPS Pac-Man</title>
-    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* Basic styling for the body and canvas */
-        body {
-            font-family: 'Press Start 2P', cursive; /* Apply arcade font */
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            background-color: #000; /* Black background */
-            color: #fff; /* White text */
-            overflow: hidden; /* Prevent scrolling */
-            touch-action: none; /* Disable panning/zooming on touch devices */
-        }
-        /* Style the game canvas */
-        #gameCanvas {
-            background-color: #111; /* Dark background for canvas */
-            border: 4px solid #00ffff; /* Cyan border */
-            display: block; /* Remove extra space below canvas */
-            max-width: 95vw; /* Max width relative to viewport */
-            max-height: 70vh; /* Max height relative to viewport */
-            aspect-ratio: 1 / 1; /* Maintain square aspect ratio */
-            box-shadow: 0 0 15px #00ffff; /* Glow effect */
-            border-radius: 10px; /* Slightly rounded corners */
-        }
-        /* Style buttons with arcade look */
-        button {
-            font-family: 'Press Start 2P', cursive;
-            background-color: #ffff00; /* Yellow background */
-            color: #000; /* Black text */
-            border: 3px solid #fff; /* White border */
-            padding: 10px 20px;
-            margin: 10px;
-            cursor: pointer;
-            border-radius: 8px; /* Rounded corners */
-            box-shadow: 0 4px #888; /* Simple shadow */
-            transition: all 0.1s ease;
-            text-transform: uppercase;
-        }
-        button:active {
-            box-shadow: 0 2px #555;
-            transform: translateY(2px);
-        }
-        /* Style for disabled button */
-        button:disabled {
-            background-color: #777; /* Gray background */
-            color: #ccc; /* Lighter text */
-            cursor: not-allowed;
-            box-shadow: 0 4px #555;
-        }
-        /* Style the message area */
-        #message {
-            margin-top: 15px;
-            padding: 10px;
-            min-height: 50px; /* Ensure space for potentially longer messages */
-            text-align: center;
-            color: #ffff00; /* Yellow text for messages */
-            font-size: 0.9em; /* Slightly smaller font for messages */
-            line-height: 1.4; /* Better line spacing */
-        }
-        /* Hide elements initially */
-        .hidden {
-            display: none;
-        }
-        /* Style for game over overlay */
-        #gameOverScreen {
+        body { margin: 0; overflow: hidden; background-color: #000; color: #fff; font-family: sans-serif; }
+        canvas { display: block; }
+        #status {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.8);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 10;
-            color: #ff0000; /* Red game over text */
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            color: #lime;
+         }
+         #warning {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            right: 10px;
+            background-color: rgba(255,0,0,0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: bold;
             text-align: center;
-        }
-        /* Style for safety warning */
-        #safetyWarning {
-             margin-top: 15px;
-             padding: 10px;
-             color: #ffcc00; /* Orange warning color */
-             text-align: center;
-             font-size: 0.8em;
-        }
+            color: #fff;
+         }
+         #controls {
+             position: absolute;
+             top: 50px;
+             left: 10px;
+             background-color: rgba(0,0,0,0.7);
+             padding: 5px 10px;
+             border-radius: 5px;
+         }
+         #controls button {
+             margin: 5px;
+             padding: 8px;
+         }
     </style>
 </head>
 <body>
-
-    <h1 class="text-2xl mb-4 text-yellow-400">GPS Pac-Man</h1>
-
-    <div id="message">Press Start Game to begin!</div>
-
-    <canvas id="gameCanvas" width="400" height="400"></canvas>
-
-    <div class="mt-4">
-        <button id="startButton">Start Game</button>
-        <button id="resetOriginButton" class="hidden">Reset Origin</button>
-    </div>
-
-     <div id="safetyWarning" class="hidden">
-        Warning: Pay attention to your real-world surroundings while playing!
-    </div>
-
-    <div id="gameOverScreen" class="hidden">
-        <h2 class="text-4xl mb-4">Game Over!</h2>
-        <button id="restartButton">Restart</button>
+    <canvas id="gameCanvas"></canvas>
+    <div id="status">Requesting GPS permission...</div>
+    <div id="warning">WARNING: Pay attention to your real-world surroundings while playing!</div>
+    <div id="controls">
+        <button id="recenterBtn">Recenter View</button>
     </div>
 
     <script>
-        // --- Game Configuration ---
-        const GAME_AREA_METERS = 15.24; // Approx 50 feet
-        const PACMAN_RADIUS = 10;
-        const GHOST_RADIUS = 10;
-        const GHOST_SPEED = 0.5; // Pixels per frame
+        // --- Configuration ---
+        const GAME_AREA_WIDTH_FEET = 50;
+        const GAME_AREA_HEIGHT_FEET = 50;
+        const FEET_TO_METERS = 0.3048;
+        const GAME_AREA_WIDTH_METERS = GAME_AREA_WIDTH_FEET * FEET_TO_METERS;
+        const GAME_AREA_HEIGHT_METERS = GAME_AREA_HEIGHT_FEET * FEET_TO_METERS;
+        const PACMAN_RADIUS = 15; // pixels
+        const GHOST_RADIUS = 14; // pixels
+        const GHOST_SPEED = 0.3; // meters per second (relative to game time)
         const NUM_GHOSTS = 4;
-        const GHOST_COLORS = ['#FF0000', '#FFB8FF', '#00FFFF', '#FFB852']; // Red, Pink, Cyan, Orange
-
-        // --- Canvas & Context ---
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        let canvasSize = Math.min(canvas.width, canvas.height); // Use the smaller dimension
-
-        // --- UI Elements ---
-        const messageEl = document.getElementById('message');
-        const startButton = document.getElementById('startButton');
-        const resetOriginButton = document.getElementById('resetOriginButton');
-        const gameOverScreen = document.getElementById('gameOverScreen');
-        const restartButton = document.getElementById('restartButton');
-        const safetyWarning = document.getElementById('safetyWarning');
-
-        // --- Game State ---
-        let originCoords = null; // { latitude: number, longitude: number }
-        let currentCoords = null; // { latitude: number, longitude: number }
-        let watchId = null;
-        let playerPos = { x: canvasSize / 2, y: canvasSize / 2 };
-        let ghosts = [];
-        let animationFrameId = null;
-        let isGameOver = false;
-        let metersPerPixel = GAME_AREA_METERS / canvasSize;
-        let pacmanMouthOpen = true;
-        let frameCount = 0; // For animation timing
-
-        // --- GPS Options ---
-        const gpsOptions = {
+        const GPS_OPTIONS = {
             enableHighAccuracy: true,
-            timeout: 10000, // 10 seconds
-            maximumAge: 0 // Don't use cached position
+            maximumAge: 5000, // Use cache if data is not older than 5 seconds
+            timeout: 10000 // Give up after 10 seconds
         };
 
-        // --- Initialization ---
-        function initGame() {
-            console.log("--- initGame: Start ---");
-            // Reset game state
-            isGameOver = false;
-            originCoords = null;
-            currentCoords = null;
-            ghosts = [];
-            frameCount = 0;
-            console.log("initGame: State variables reset.");
+        // --- Global Variables ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusElement = document.getElementById('status');
+        const recenterBtn = document.getElementById('recenterBtn');
 
-            // Stop existing loops/watches
-            if (watchId) {
-                navigator.geolocation.clearWatch(watchId);
-                watchId = null;
-                console.log("initGame: GPS watch cleared.");
-            } else {
-                 console.log("initGame: No active GPS watch to clear.");
-            }
-            if (animationFrameId) {
-                cancelAnimationFrame(animationFrameId);
-                animationFrameId = null;
-                console.log("initGame: Animation frame cancelled.");
-            } else {
-                 console.log("initGame: No active animation frame to cancel.");
-            }
+        let canvasWidth = window.innerWidth;
+        let canvasHeight = window.innerHeight;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
 
-            // Reset UI elements
-            console.log("initGame: Updating UI elements...");
-            gameOverScreen.classList.add('hidden');
-            console.log("initGame: Game over screen hidden.");
-            startButton.classList.remove('hidden');
-            console.log("initGame: Start button unhidden.");
-            startButton.disabled = false; // *** Explicitly enable start button ***
-            console.log("initGame: Start button explicitly enabled. Disabled state:", startButton.disabled);
-            resetOriginButton.classList.add('hidden');
-            console.log("initGame: Reset origin button hidden.");
-            safetyWarning.classList.add('hidden');
-            console.log("initGame: Safety warning hidden.");
-            messageEl.textContent = 'Press Start Game to begin!';
-            console.log("initGame: Message text reset.");
+        let initialLat = null;
+        let initialLon = null;
+        let currentLat = null;
+        let currentLon = null;
 
-            // Ensure canvas is sized correctly and draw initial state
-            resizeCanvas(); // Call resize first
-            playerPos = { x: canvasSize / 2, y: canvasSize / 2 }; // Reset player position after resize
-            drawGameArea(); // Draw initial border
-            drawPacman(playerPos.x, playerPos.y); // Draw Pacman centered
-            console.log("--- initGame: Finished ---");
+        // View offset allows panning the view if PacMan goes near edge
+        let viewOffsetX = 0;
+        let viewOffsetY = 0;
+        let targetViewOffsetX = 0;
+        let targetViewOffsetY = 0;
+
+        // Pacman's position in METERS relative to start
+        let pacmanX_meters = 0;
+        let pacmanY_meters = 0;
+
+        // Scaling factor: pixels per meter
+        let pixelsPerMeterX = canvasWidth / GAME_AREA_WIDTH_METERS;
+        let pixelsPerMeterY = canvasHeight / GAME_AREA_HEIGHT_METERS;
+        // Use a single scale factor to avoid distortion
+        let pixelsPerMeter = Math.min(pixelsPerMeterX, pixelsPerMeterY);
+
+
+        let ghosts = [];
+        let isGameOver = false;
+        let gameStarted = false;
+        let lastTimestamp = 0;
+        let mouthAngle = 0;
+        let mouthOpening = true;
+
+        // --- Helper Functions ---
+
+        function degreesToRadians(degrees) {
+            return degrees * Math.PI / 180;
         }
 
-        // --- Event Listeners ---
-        startButton.addEventListener('click', startGame);
-        resetOriginButton.addEventListener('click', resetOrigin);
-        // Add log inside listener to confirm it fires
-        restartButton.addEventListener('click', () => {
-            console.log("--- Restart button clicked ---");
-            initGame();
-        });
-        window.addEventListener('resize', resizeCanvas); // Adjust canvas on resize
-
-        // --- Canvas Resizing ---
-        function resizeCanvas() {
-            // Make canvas responsive, maintaining aspect ratio
-            const availableWidth = window.innerWidth * 0.95;
-            const availableHeight = window.innerHeight * 0.70;
-            const size = Math.min(availableWidth, availableHeight);
-
-            // Only update if size actually changes to avoid unnecessary redraws
-            if (canvas.width !== size || canvas.height !== size) {
-                canvas.width = size;
-                canvas.height = size;
-                canvasSize = size; // Update canvasSize variable
-                metersPerPixel = GAME_AREA_METERS / canvasSize; // Recalculate scale
-                console.log(`Canvas resized to: ${canvasSize}x${canvasSize}, m/px: ${metersPerPixel}`);
-
-                // If game is running, redraw immediately and update positions if needed
-                if (animationFrameId && !isGameOver) {
-                    if (currentCoords && originCoords) {
-                        updatePlayerPosition(currentCoords);
-                    } else {
-                        playerPos = { x: canvasSize / 2, y: canvasSize / 2 };
-                    }
-                     ghosts.forEach(ghost => {
-                         ghost.x = (ghost.x / (canvas.width / size)) * size;
-                         ghost.y = (ghost.y / (canvas.height / size)) * size;
-                     });
-                    draw();
-                } else if (!animationFrameId && !isGameOver) {
-                    // If game hasn't started or is being initialized, redraw the static scene
-                     playerPos = { x: canvasSize / 2, y: canvasSize / 2 };
-                     drawGameArea();
-                     if(playerPos) drawPacman(playerPos.x, playerPos.y); // Draw only if playerPos exists
-                }
-            }
-        }
-
-        // --- Game Logic ---
-        function startGame() {
-             console.log("--- startGame: Start ---");
-            // ** Check for Secure Context (HTTPS) **
-            if (!window.isSecureContext) {
-                messageEl.innerHTML = 'Error: GPS requires a secure connection (HTTPS). Load this page via https://';
-                console.warn("startGame: Geolocation API called from non-secure context.");
-                return; // Stop execution
-            }
-             console.log("startGame: Context is secure (HTTPS).");
-
-            if (!navigator.geolocation) {
-                messageEl.textContent = 'Error: Geolocation is not supported by your browser.';
-                 console.error("startGame: Geolocation not supported.");
-                return; // Stop execution
-            }
-             console.log("startGame: Geolocation is supported.");
-
-            messageEl.textContent = 'Requesting GPS access...';
-            startButton.classList.add('hidden'); // Hide start button immediately
-            startButton.disabled = true; // Disable start button while starting
-            safetyWarning.classList.remove('hidden'); // Show safety warning
-             console.log("startGame: UI updated for GPS request.");
-
-            // Get initial position to set origin
-            console.log("startGame: Requesting current position...");
-            navigator.geolocation.getCurrentPosition(
-                (position) => {
-                    console.log("startGame: Initial position received:", position);
-                    setOrigin(position);
-                    messageEl.textContent = 'GPS acquired! Walk around to move Pac-Man.';
-                    resetOriginButton.classList.remove('hidden'); // Show reset button
-                    resetOriginButton.disabled = false; // Ensure reset button is enabled
-
-                    // Start watching position
-                    console.log("startGame: Starting GPS watch...");
-                    if (watchId) navigator.geolocation.clearWatch(watchId); // Clear previous watch just in case
-                    watchId = navigator.geolocation.watchPosition(
-                        handlePositionUpdate,
-                        handleGpsError,
-                        gpsOptions
-                    );
-                     console.log("startGame: GPS watch started with ID:", watchId);
-
-                    // Initialize ghosts
-                    createGhosts();
-
-                    // Start the game loop
-                    if (animationFrameId) cancelAnimationFrame(animationFrameId); // Clear previous loop if any
-                    isGameOver = false; // Ensure game is not over
-                    console.log("startGame: Starting game loop...");
-                    gameLoop();
-                },
-                (error) => {
-                    // Error during initial getCurrentPosition
-                    console.error("startGame: Error getting initial position:", error);
-                    handleGpsError(error); // Use the common error handler
-                    // Ensure UI reflects failure state
-                    startButton.classList.remove('hidden'); // Show start button again
-                    startButton.disabled = false; // Re-enable start button
-                    safetyWarning.classList.add('hidden');
-                    resetOriginButton.classList.add('hidden'); // Ensure reset is hidden
-                },
-                gpsOptions
-            );
-        }
-
-        function setOrigin(position) {
-            originCoords = {
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude
-            };
-            currentCoords = { ...originCoords }; // Start at origin
-            playerPos = { x: canvasSize / 2, y: canvasSize / 2 }; // Center Pac-Man initially
-            console.log('setOrigin: Origin set:', originCoords);
-             messageEl.textContent = 'Origin set! Walk around.';
-        }
-
-        function resetOrigin() {
-             console.log("--- resetOrigin: Start ---");
-             messageEl.textContent = 'Attempting to reset origin...';
-             resetOriginButton.disabled = true; // Disable button while resetting
-             // Always try to get a fresh position for resetting
-             navigator.geolocation.getCurrentPosition(
-                 (position) => {
-                     console.log("resetOrigin: Position received for reset:", position);
-                     setOrigin(position); // Reuse setOrigin function
-                     messageEl.textContent = 'Origin reset to current location.';
-                     resetOriginButton.disabled = false; // Re-enable button
-                     console.log("resetOrigin: Success.");
-                 },
-                 (error) => {
-                     console.error("resetOrigin: Error getting position for reset:", error);
-                     handleGpsError(error); // Handle error
-                     // Provide feedback that reset failed
-                     messageEl.textContent = 'Failed to reset origin. ' + messageEl.textContent; // Append to existing error msg
-                     resetOriginButton.disabled = false; // Re-enable button even on failure
-                     console.log("resetOrigin: Failed.");
-                 },
-                 gpsOptions // Use same options
-             );
-        }
-
-
-        function handlePositionUpdate(position) {
-            // console.log("Position update received:", position); // Can be very noisy
-            currentCoords = {
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude
-            };
-            // Don't try to update position if origin hasn't been set yet or game over
-            if (originCoords && !isGameOver) {
-                updatePlayerPosition(currentCoords);
-            }
-             // Display accuracy for debugging/info - update less frequently?
-             if (position.coords.accuracy && frameCount % 60 === 0) { // Update accuracy message once per second approx
-                 let accuracyMsg = `GPS Accuracy: ${position.coords.accuracy.toFixed(1)}m`;
-                 if (messageEl.textContent.startsWith('Origin set') || messageEl.textContent.startsWith('GPS Accuracy')) {
-                      messageEl.textContent = accuracyMsg;
-                 }
-             }
-        }
-
-        function updatePlayerPosition(newCoords) {
-            if (!originCoords) return;
-
-            const { deltaX_meters, deltaY_meters } = calculateDistanceMeters(
-                newCoords.latitude,
-                newCoords.longitude,
-                originCoords.latitude,
-                originCoords.longitude
-            );
-
-            // Convert meters difference to pixel difference
-            const deltaX_pixels = deltaX_meters / metersPerPixel;
-            const deltaY_pixels = -deltaY_meters / metersPerPixel; // Invert Y for canvas
-
-            // Calculate new position relative to canvas center
-            let newX = canvasSize / 2 + deltaX_pixels;
-            let newY = canvasSize / 2 + deltaY_pixels;
-
-            // Clamp position within canvas boundaries (with padding for Pac-Man's size)
-            playerPos.x = Math.max(PACMAN_RADIUS, Math.min(canvasSize - PACMAN_RADIUS, newX));
-            playerPos.y = Math.max(PACMAN_RADIUS, Math.min(canvasSize - PACMAN_RADIUS, newY));
-        }
-
-        function handleGpsError(error) {
-             console.log("--- handleGpsError: Start ---", error.code, error.message);
-            let msg = 'GPS Error: ';
-            switch (error.code) {
-                case error.PERMISSION_DENIED:
-                    msg += 'Permission denied. Check browser/OS settings (Settings > Privacy > Location Services) & ensure HTTPS.';
-                    break;
-                case error.POSITION_UNAVAILABLE:
-                    msg += 'Location unavailable. Check signal/device settings.';
-                    break;
-                case error.TIMEOUT:
-                    msg += 'Request timed out. Try again.';
-                    break;
-                case error.UNKNOWN_ERROR:
-                    msg += 'An unknown error occurred.';
-                    break;
-            }
-            messageEl.textContent = msg;
-            console.error("handleGpsError: Detailed GPS Error:", error);
-
-             // Stop game if running
-             if (watchId) {
-                 navigator.geolocation.clearWatch(watchId);
-                 watchId = null;
-                  console.log("handleGpsError: GPS watch cleared.");
-             }
-             if (animationFrameId) {
-                 cancelAnimationFrame(animationFrameId);
-                 animationFrameId = null;
-                  console.log("handleGpsError: Animation frame cancelled.");
-             }
-              // Reset UI to allow restarting
-              startButton.classList.remove('hidden');
-              startButton.disabled = false; // Ensure start button is usable
-              resetOriginButton.classList.add('hidden');
-              safetyWarning.classList.add('hidden');
-              // Don't show game over screen for GPS errors
-              gameOverScreen.classList.add('hidden');
-              console.log("--- handleGpsError: Finished ---");
-        }
-
-        // --- Distance Calculation ---
-        function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
-            // Simple Equirectangular approximation - good enough for small distances
+        // Haversine formula to calculate distance between two lat/lon points in meters
+        function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 6371e3; // Earth radius in meters
-            const lat1Rad = lat1 * Math.PI / 180;
-            const lat2Rad = lat2 * Math.PI / 180;
-            const lon1Rad = lon1 * Math.PI / 180;
-            const lon2Rad = lon2 * Math.PI / 180;
+            const phi1 = degreesToRadians(lat1);
+            const phi2 = degreesToRadians(lat2);
+            const deltaPhi = degreesToRadians(lat2 - lat1);
+            const deltaLambda = degreesToRadians(lon2 - lon1);
 
-            const x = (lon2Rad - lon1Rad) * Math.cos((lat1Rad + lat2Rad) / 2);
-            const y = (lat2Rad - lat1Rad);
+            const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+                      Math.cos(phi1) * Math.cos(phi2) *
+                      Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
-            const deltaX_meters = R * x; // East-West difference
-            const deltaY_meters = R * y; // North-South difference
-
-            return { deltaX_meters, deltaY_meters };
+            return R * c;
         }
 
-        // --- Ghost Logic ---
-        function createGhosts() {
-             console.log("--- createGhosts: Start ---");
-            ghosts = [];
-             const padding = GHOST_RADIUS * 3; // Keep away from edge initially
-             const quarterSize = canvasSize / 4; // Area to spawn in corners
-             const centerDistThreshold = canvasSize / 5; // Min distance from center
+        // Calculate signed displacement in meters
+        function calculateDisplacement(startLat, startLon, currentLat, currentLon) {
+            const N_S_dist = calculateDistance(startLat, startLon, currentLat, startLon);
+            const E_W_dist = calculateDistance(startLat, startLon, startLat, currentLon);
 
-            for (let i = 0; i < NUM_GHOSTS; i++) {
-                let startX, startY, attempts = 0;
-                do {
-                    switch(i % 4) {
-                        case 0: // Top-left
-                            startX = padding + Math.random() * quarterSize;
-                            startY = padding + Math.random() * quarterSize;
-                            break;
-                        case 1: // Top-right
-                            startX = canvasSize - padding - Math.random() * quarterSize;
-                            startY = padding + Math.random() * quarterSize;
-                            break;
-                        case 2: // Bottom-left
-                            startX = padding + Math.random() * quarterSize;
-                            startY = canvasSize - padding - Math.random() * quarterSize;
-                            break;
-                        case 3: // Bottom-right
-                            startX = canvasSize - padding - Math.random() * quarterSize;
-                            startY = canvasSize - padding - Math.random() * quarterSize;
-                            break;
-                    }
-                    const dx = startX - canvasSize / 2;
-                    const dy = startY - canvasSize / 2;
-                    var distFromCenter = Math.sqrt(dx*dx + dy*dy);
-                    attempts++;
-                } while (distFromCenter < centerDistThreshold && attempts < 10) // Re-roll if too close, max 10 attempts
+            // Determine sign based on direction
+            const deltaY_meters = (currentLat > startLat) ? N_S_dist : -N_S_dist; // North is positive Y
+            const deltaX_meters = (currentLon > startLon) ? E_W_dist : -E_W_dist; // East is positive X
 
-                if (attempts >= 10) console.warn(`createGhosts: Could not place ghost ${i} far enough from center after 10 attempts.`);
-
-                ghosts.push({
-                    x: startX,
-                    y: startY,
-                    vx: (Math.random() - 0.5) * GHOST_SPEED * 2, // Random initial velocity
-                    vy: (Math.random() - 0.5) * GHOST_SPEED * 2,
-                    color: GHOST_COLORS[i % GHOST_COLORS.length]
-                });
-            }
-             console.log("--- createGhosts: Finished. Ghosts:", ghosts.length);
+            return { x: deltaX_meters, y: deltaY_meters };
         }
 
-        function updateGhosts() {
-            ghosts.forEach(ghost => {
-                ghost.x += ghost.vx;
-                ghost.y += ghost.vy;
-
-                // Bounce off walls - More robust clamping
-                if (ghost.x - GHOST_RADIUS < 0) {
-                    ghost.x = GHOST_RADIUS;
-                    ghost.vx *= -1;
-                } else if (ghost.x + GHOST_RADIUS > canvasSize) {
-                    ghost.x = canvasSize - GHOST_RADIUS;
-                    ghost.vx *= -1;
-                }
-                if (ghost.y - GHOST_RADIUS < 0) {
-                    ghost.y = GHOST_RADIUS;
-                    ghost.vy *= -1;
-                } else if (ghost.y + GHOST_RADIUS > canvasSize) {
-                    ghost.y = canvasSize - GHOST_RADIUS;
-                    ghost.vy *= -1;
-                }
-
-                 if (Math.random() < 0.01) {
-                     ghost.vx = (Math.random() - 0.5) * GHOST_SPEED * 2;
-                     ghost.vy = (Math.random() - 0.5) * GHOST_SPEED * 2;
-                 }
-            });
+        // Convert game world meters to canvas coordinates
+        function metersToCanvas(metersX, metersY) {
+             // Center the view on the canvas, adjust by view offset
+            const canvasX = canvasWidth / 2 + (metersX - viewOffsetX) * pixelsPerMeter;
+            const canvasY = canvasHeight / 2 - (metersY - viewOffsetY) * pixelsPerMeter; // Y is inverted on canvas
+            return { x: canvasX, y: canvasY };
         }
 
-        // --- Collision Detection ---
-        function checkCollisions() {
-            if (isGameOver) return;
-
-            ghosts.forEach(ghost => {
-                if (!playerPos) return; // Skip if playerPos is somehow null
-                const dx = playerPos.x - ghost.x;
-                const dy = playerPos.y - ghost.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-
-                if (distance < (PACMAN_RADIUS + GHOST_RADIUS) * 0.8) {
-                    console.log(`Collision detected! Player: (${playerPos.x.toFixed(1)}, ${playerPos.y.toFixed(1)}), Ghost: (${ghost.x.toFixed(1)}, ${ghost.y.toFixed(1)}), Dist: ${distance.toFixed(1)}`);
-                    gameOver();
-                }
-            });
-        }
-
-        function gameOver() {
-            if (isGameOver) return; // Prevent multiple triggers
-
-            isGameOver = true;
-            console.log("--- gameOver: Start ---");
-            messageEl.textContent = 'Game Over!'; // Set final message
-            gameOverScreen.classList.remove('hidden'); // Show overlay
-            resetOriginButton.classList.add('hidden'); // Hide reset button
-            resetOriginButton.disabled = true; // Also disable reset button
-            safetyWarning.classList.add('hidden'); // Hide warning
-
-            // Stop GPS updates and game loop
-            if (watchId) {
-                navigator.geolocation.clearWatch(watchId);
-                watchId = null;
-                console.log("gameOver: GPS watch cleared.");
-            }
-            if (animationFrameId) {
-                cancelAnimationFrame(animationFrameId);
-                animationFrameId = null;
-                console.log("gameOver: Animation frame cancelled.");
-            }
-             // Draw final frame
-             draw();
-             console.log("--- gameOver: Finished ---");
-        }
-
-
-        // --- Drawing ---
-        function drawGameArea() {
-             ctx.fillStyle = '#111';
-             ctx.fillRect(0, 0, canvas.width, canvas.height);
-             ctx.strokeStyle = '#00ffff';
-             ctx.lineWidth = 4;
-             ctx.strokeRect(0, 0, canvas.width, canvas.height);
-        }
-
-        function drawPacman(x, y) {
-            if (!isGameOver) {
-                frameCount++;
-                if (frameCount % 15 === 0) {
-                    pacmanMouthOpen = !pacmanMouthOpen;
-                }
+        function drawPacman(canvasX, canvasY) {
+            // Animate mouth
+            const baseAngle = Math.PI / 8; // 22.5 degrees
+            if (mouthOpening) {
+                mouthAngle += 0.05;
+                if (mouthAngle >= baseAngle) mouthOpening = false;
             } else {
-                pacmanMouthOpen = false; // Keep mouth closed on game over
+                mouthAngle -= 0.05;
+                if (mouthAngle <= 0) mouthOpening = true;
             }
 
-            let startAngle, endAngle;
-            if (pacmanMouthOpen && !isGameOver) {
-                startAngle = 0.2 * Math.PI; // Open mouth
-                endAngle = 1.8 * Math.PI;
-            } else {
-                startAngle = 0; // Closed mouth (full circle)
-                endAngle = 2 * Math.PI;
-            }
-
-            ctx.beginPath();
-            ctx.arc(x, y, PACMAN_RADIUS, startAngle, endAngle);
-            if (pacmanMouthOpen && !isGameOver) {
-                 ctx.lineTo(x, y);
-            }
-            ctx.closePath();
             ctx.fillStyle = 'yellow';
+            ctx.beginPath();
+            ctx.arc(canvasX, canvasY, PACMAN_RADIUS, mouthAngle, Math.PI * 2 - mouthAngle);
+            ctx.lineTo(canvasX, canvasY); // Complete the pie shape
+            ctx.closePath();
             ctx.fill();
         }
 
-        function drawGhost(x, y, color) {
-            const bodyHeight = GHOST_RADIUS * 1.2;
-            const bodyWidth = GHOST_RADIUS * 1.8;
+        function drawGhost(ghost, color) {
+            const { x: canvasX, y: canvasY } = metersToCanvas(ghost.x, ghost.y);
+            const radius = GHOST_RADIUS;
+            const feet = radius * 0.4; // Wavy feet height
+
             ctx.fillStyle = color;
-
-            // Body
             ctx.beginPath();
-            ctx.rect(x - bodyWidth / 2, y - bodyHeight / 2 + GHOST_RADIUS * 0.2, bodyWidth, bodyHeight);
-            ctx.fill();
-
             // Head
-            ctx.beginPath();
-            ctx.arc(x, y - bodyHeight / 2 + GHOST_RADIUS * 0.2, bodyWidth / 2, Math.PI, 0);
+            ctx.arc(canvasX, canvasY, radius, Math.PI, 0);
+            // Body base
+            ctx.lineTo(canvasX + radius, canvasY + radius);
+            // Feet (simple wavy line)
+            ctx.lineTo(canvasX + radius * 0.66, canvasY + radius - feet);
+            ctx.lineTo(canvasX + radius * 0.33, canvasY + radius);
+            ctx.lineTo(canvasX, canvasY + radius - feet);
+            ctx.lineTo(canvasX - radius * 0.33, canvasY + radius);
+            ctx.lineTo(canvasX - radius * 0.66, canvasY + radius - feet);
+            ctx.lineTo(canvasX - radius, canvasY + radius);
+            ctx.closePath();
             ctx.fill();
 
             // Eyes
-            const eyeRadius = GHOST_RADIUS * 0.2;
-            const eyeOffsetX = GHOST_RADIUS * 0.35;
-            const eyeOffsetY = -GHOST_RADIUS * 0.1;
             ctx.fillStyle = 'white';
             ctx.beginPath();
-            ctx.arc(x - eyeOffsetX, y + eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-            ctx.arc(x + eyeOffsetX, y + eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+            ctx.arc(canvasX - radius * 0.4, canvasY - radius * 0.2, radius * 0.25, 0, Math.PI * 2); // Left eye white
+            ctx.arc(canvasX + radius * 0.4, canvasY - radius * 0.2, radius * 0.25, 0, Math.PI * 2); // Right eye white
             ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(canvasX - radius * 0.4, canvasY - radius * 0.2, radius * 0.1, 0, Math.PI * 2); // Left pupil
+            ctx.arc(canvasX + radius * 0.4, canvasY - radius * 0.2, radius * 0.1, 0, Math.PI * 2); // Right pupil
+            ctx.fill();
+        }
 
-             // Pupils
-             const pupilRadius = GHOST_RADIUS * 0.1;
-             ctx.fillStyle = 'black';
-             ctx.beginPath();
-             ctx.arc(x - eyeOffsetX, y + eyeOffsetY, pupilRadius, 0, Math.PI * 2);
-             ctx.arc(x + eyeOffsetX, y + eyeOffsetY, pupilRadius, 0, Math.PI * 2);
-             ctx.fill();
+        function updateGhosts(deltaTime) {
+            const ghostColors = ['red', 'pink', 'cyan', 'orange'];
+            ghosts.forEach((ghost, index) => {
+                // Simple AI: Move towards Pac-Man, but with some inertia/randomness
+                const dx = pacmanX_meters - ghost.x;
+                const dy = pacmanY_meters - ghost.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                let moveX = 0;
+                let moveY = 0;
+
+                if (dist > 1) { // Don't divide by zero if right on top
+                    // Normalized direction vector
+                    const dirX = dx / dist;
+                    const dirY = dy / dist;
+                    moveX = dirX * GHOST_SPEED * deltaTime;
+                    moveY = dirY * GHOST_SPEED * deltaTime;
+                }
+
+                 // Add some random wobble? (Optional)
+                 // moveX += (Math.random() - 0.5) * 0.1 * GHOST_SPEED * deltaTime;
+                 // moveY += (Math.random() - 0.5) * 0.1 * GHOST_SPEED * deltaTime;
+
+                ghost.x += moveX;
+                ghost.y += moveY;
+
+                // Keep ghosts within bounds (optional, maybe let them wander slightly?)
+                const halfWidth = GAME_AREA_WIDTH_METERS / 2;
+                const halfHeight = GAME_AREA_HEIGHT_METERS / 2;
+                ghost.x = Math.max(-halfWidth, Math.min(halfWidth, ghost.x));
+                ghost.y = Math.max(-halfHeight, Math.min(halfHeight, ghost.y));
+            });
+        }
+
+        function checkCollisions() {
+            ghosts.forEach(ghost => {
+                const dx = pacmanX_meters - ghost.x;
+                const dy = pacmanY_meters - ghost.y;
+                const distance_meters = Math.sqrt(dx * dx + dy * dy);
+
+                // Convert radii to meters for collision check
+                const pacmanRadiusMeters = PACMAN_RADIUS / pixelsPerMeter;
+                const ghostRadiusMeters = GHOST_RADIUS / pixelsPerMeter;
+
+                if (distance_meters < pacmanRadiusMeters + ghostRadiusMeters) {
+                    isGameOver = true;
+                }
+            });
+        }
+
+        function initGhosts() {
+             const halfWidth = GAME_AREA_WIDTH_METERS / 2;
+             const halfHeight = GAME_AREA_HEIGHT_METERS / 2;
+             for (let i = 0; i < NUM_GHOSTS; i++) {
+                 ghosts.push({
+                    // Start near corners or center, away from PacMan's start (0,0)
+                    x: (Math.random() > 0.5 ? 1 : -1) * halfWidth * 0.7 * Math.random(),
+                    y: (Math.random() > 0.5 ? 1 : -1) * halfHeight * 0.7 * Math.random(),
+                 });
+             }
+        }
+
+        function recenterView() {
+             // Set the target offset to Pac-Man's current position
+             targetViewOffsetX = pacmanX_meters;
+             targetViewOffsetY = pacmanY_meters;
+             statusElement.textContent = "View recentered!";
+             setTimeout(() => updateStatus(), 2000); // Clear message after 2s
+        }
+
+        // --- GPS Handling ---
+
+        function handleInitialPosition(position) {
+            initialLat = position.coords.latitude;
+            initialLon = position.coords.longitude;
+            currentLat = initialLat;
+            currentLon = initialLon;
+
+            statusElement.textContent = "GPS Locked! Walk around to move Pac-Man.";
+            console.log("Initial Position:", initialLat, initialLon);
+
+            initGhosts();
+            gameStarted = true;
+            lastTimestamp = performance.now();
+            gameLoop(); // Start the game loop only after getting initial position
+
+            // Start watching for subsequent position updates
+            navigator.geolocation.watchPosition(handlePositionUpdate, handleError, GPS_OPTIONS);
+
+            // Add listener for recenter button
+            recenterBtn.addEventListener('click', recenterView);
+        }
+
+        function handlePositionUpdate(position) {
+            if (!initialLat || isGameOver) return; // Don't update if game hasn't started or is over
+
+            currentLat = position.coords.latitude;
+            currentLon = position.coords.longitude;
+            const accuracy = position.coords.accuracy; // Accuracy in meters
+
+            // Calculate displacement from the starting point
+            const displacement = calculateDisplacement(initialLat, initialLon, currentLat, currentLon);
+
+            pacmanX_meters = displacement.x;
+            pacmanY_meters = displacement.y;
+
+             // Optional: Keep Pac-Man within the defined game area bounds
+             const halfWidth = GAME_AREA_WIDTH_METERS / 2;
+             const halfHeight = GAME_AREA_HEIGHT_METERS / 2;
+             pacmanX_meters = Math.max(-halfWidth, Math.min(halfWidth, pacmanX_meters));
+             pacmanY_meters = Math.max(-halfHeight, Math.min(halfHeight, pacmanY_meters));
+
+             // Update view offset smoothly if PacMan gets close to the edge
+             const edgeThresholdX = canvasWidth * 0.3; // 30% from edge
+             const edgeThresholdY = canvasHeight * 0.3;
+             const { x: pacmanCanvasX, y: pacmanCanvasY } = metersToCanvas(pacmanX_meters, pacmanY_meters);
+
+             if (pacmanCanvasX < edgeThresholdX) {
+                 targetViewOffsetX -= (edgeThresholdX - pacmanCanvasX) / pixelsPerMeter * 0.1; // Move view left
+             } else if (pacmanCanvasX > canvasWidth - edgeThresholdX) {
+                 targetViewOffsetX += (pacmanCanvasX - (canvasWidth - edgeThresholdX)) / pixelsPerMeter * 0.1; // Move view right
+             }
+             if (pacmanCanvasY < edgeThresholdY) {
+                 targetViewOffsetY += (edgeThresholdY - pacmanCanvasY) / pixelsPerMeter * 0.1; // Move view up (decrease Y offset)
+             } else if (pacmanCanvasY > canvasHeight - edgeThresholdY) {
+                 targetViewOffsetY -= (pacmanCanvasY - (canvasHeight - edgeThresholdY)) / pixelsPerMeter * 0.1; // Move view down (increase Y offset)
+             }
+
+
+            updateStatus(accuracy); // Update status with accuracy
+            // console.log("Position Update:", currentLat, currentLon, "-> Meters:", pacmanX_meters, pacmanY_meters);
+        }
+
+        function handleError(error) {
+            console.error("GPS Error:", error);
+            let message = "Error getting GPS location: ";
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    message += "Permission denied.";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    message += "Location information is unavailable.";
+                    break;
+                case error.TIMEOUT:
+                    message += "Location request timed out.";
+                    break;
+                case error.UNKNOWN_ERROR:
+                    message += "An unknown error occurred.";
+                    break;
+            }
+            statusElement.textContent = message;
+            statusElement.style.color = 'red';
+            isGameOver = true; // Stop game if GPS fails critically
+        }
+
+        function updateStatus(accuracy = null) {
+            if (isGameOver) return;
+            if (!gameStarted) {
+                 statusElement.textContent = "Waiting for initial GPS Lock...";
+                 return;
+            }
+            let statusText = `Lat: ${currentLat?.toFixed(5)}, Lon: ${currentLon?.toFixed(5)}`;
+            if (accuracy !== null) {
+                statusText += ` | Acc: ${accuracy.toFixed(1)}m`;
+            }
+            statusText += ` | Pos (m): ${pacmanX_meters.toFixed(1)}, ${pacmanY_meters.toFixed(1)}`;
+            statusElement.textContent = statusText;
+             statusElement.style.color = '#lime'; // Ensure it's green if showing data
+        }
+
+
+        // --- Game Loop ---
+
+        function update(deltaTime) {
+            if (isGameOver || !gameStarted) return;
+
+            // Smoothly move view offset towards target
+            viewOffsetX += (targetViewOffsetX - viewOffsetX) * 0.1;
+            viewOffsetY += (targetViewOffsetY - viewOffsetY) * 0.1;
+
+            updateGhosts(deltaTime);
+            checkCollisions();
+        }
+
+        function drawGrid() {
+            ctx.strokeStyle = 'rgba(0, 50, 100, 0.5)'; // Dark blue grid
+            ctx.lineWidth = 1;
+            const gridSizeMeters = 5; // Draw a line every 5 meters
+            const gridSizePixels = gridSizeMeters * pixelsPerMeter;
+
+            // Calculate the meter range currently visible
+            const minMetersX = viewOffsetX - (canvasWidth / 2) / pixelsPerMeter;
+            const maxMetersX = viewOffsetX + (canvasWidth / 2) / pixelsPerMeter;
+            const minMetersY = viewOffsetY - (canvasHeight / 2) / pixelsPerMeter;
+            const maxMetersY = viewOffsetY + (canvasHeight / 2) / pixelsPerMeter;
+
+             // Find the starting grid lines just off-screen or at the edge
+             const startGridX = Math.ceil(minMetersX / gridSizeMeters) * gridSizeMeters;
+             const startGridY = Math.ceil(minMetersY / gridSizeMeters) * gridSizeMeters;
+
+            // Vertical lines
+            for (let mx = startGridX; mx <= maxMetersX; mx += gridSizeMeters) {
+                const { x: canvasX } = metersToCanvas(mx, 0); // Y coord doesn't matter for vertical line pos
+                ctx.beginPath();
+                ctx.moveTo(canvasX, 0);
+                ctx.lineTo(canvasX, canvasHeight);
+                ctx.stroke();
+            }
+             // Horizontal lines
+             for (let my = startGridY; my <= maxMetersY; my += gridSizeMeters) {
+                const { y: canvasY } = metersToCanvas(0, my); // X coord doesn't matter for horizontal line pos
+                ctx.beginPath();
+                ctx.moveTo(0, canvasY);
+                ctx.lineTo(canvasWidth, canvasY);
+                ctx.stroke();
+            }
+
+            // Draw boundary box (optional visual aid)
+            ctx.strokeStyle = 'rgba(100, 100, 255, 0.8)';
+            ctx.lineWidth = 3;
+            const halfWidthMeters = GAME_AREA_WIDTH_METERS / 2;
+            const halfHeightMeters = GAME_AREA_HEIGHT_METERS / 2;
+            const topLeft = metersToCanvas(-halfWidthMeters, halfHeightMeters);
+            const bottomRight = metersToCanvas(halfWidthMeters, -halfHeightMeters);
+            ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+
         }
 
         function draw() {
             // Clear canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-            // Draw game area border
-            drawGameArea();
+            if (!gameStarted) {
+                ctx.fillStyle = 'white';
+                ctx.font = '20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Waiting for GPS...', canvasWidth / 2, canvasHeight / 2);
+                return;
+            }
+
+            drawGrid(); // Draw background grid
 
             // Draw Ghosts
-            ghosts.forEach(ghost => drawGhost(ghost.x, ghost.y, ghost.color));
+            const ghostColors = ['red', 'pink', 'cyan', 'orange'];
+            ghosts.forEach((ghost, index) => {
+                drawGhost(ghost, ghostColors[index % ghostColors.length]);
+            });
 
-            // Draw Pac-Man (only if position is known)
-            if (playerPos) {
-                 drawPacman(playerPos.x, playerPos.y);
+            // Draw Pac-Man at his calculated canvas position
+            const { x: pacmanCanvasX, y: pacmanCanvasY } = metersToCanvas(pacmanX_meters, pacmanY_meters);
+            drawPacman(pacmanCanvasX, pacmanCanvasY);
+
+
+            // Draw Game Over Message
+            if (isGameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, canvasHeight / 2 - 30, canvasWidth, 60);
+                ctx.fillStyle = 'red';
+                ctx.font = 'bold 30px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER!', canvasWidth / 2, canvasHeight / 2 + 10);
+                 if (!initialLat) { // Specific message if GPS failed at start
+                     ctx.font = '16px sans-serif';
+                     ctx.fillText('Could not get initial GPS position.', canvasWidth / 2, canvasHeight / 2 + 40);
+                 }
             }
         }
 
-        // --- Game Loop ---
-        function gameLoop() {
-            // Double check if game ended between frames
-            if (isGameOver) {
-                 console.log("gameLoop: Detected game is over, stopping loop.");
-                 // Ensure game over screen is visible if somehow hidden
-                 gameOverScreen.classList.remove('hidden');
-                 return;
+        function gameLoop(timestamp) {
+            const deltaTime = (timestamp - lastTimestamp) / 1000; // Time elapsed in seconds
+            lastTimestamp = timestamp;
+
+            if (gameStarted && !isGameOver) {
+                update(deltaTime);
             }
-
-            // Update game state
-            updateGhosts();
-            // Player position is updated by GPS callback (handlePositionUpdate)
-
-            // Check for collisions
-            checkCollisions(); // This might set isGameOver
-
-            // Draw everything
             draw();
 
-            // Request next frame ONLY if game is not over after updates/checks
-            if (!isGameOver) {
-                animationFrameId = requestAnimationFrame(gameLoop);
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- Initialization ---
+        window.onload = () => {
+             // Alert user about safety!
+             alert("SAFETY WARNING:\nPlease be constantly aware of your real-world surroundings while playing. Do not focus solely on the screen. Watch out for obstacles, traffic, and other people!");
+
+            // Adjust canvas size on resize
+            window.addEventListener('resize', () => {
+                canvasWidth = window.innerWidth;
+                canvasHeight = window.innerHeight;
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+                 // Recalculate scale - maintain aspect ratio if needed
+                pixelsPerMeterX = canvasWidth / GAME_AREA_WIDTH_METERS;
+                pixelsPerMeterY = canvasHeight / GAME_AREA_HEIGHT_METERS;
+                pixelsPerMeter = Math.min(pixelsPerMeterX, pixelsPerMeterY);
+                // No need to redraw immediately, game loop handles it
+            });
+
+            // Check for Geolocation support
+            if ('geolocation' in navigator) {
+                // Request initial position
+                navigator.geolocation.getCurrentPosition(handleInitialPosition, handleError, GPS_OPTIONS);
             } else {
-                 console.log("gameLoop: Game over flag set, stopping loop.");
-                 // Ensure game over screen is visible
-                 gameOverScreen.classList.remove('hidden');
+                statusElement.textContent = 'Geolocation is not supported by your browser.';
+                statusElement.style.color = 'red';
+                isGameOver = true; // Can't play without geolocation
+                 draw(); // Draw the error state once
             }
-        }
-
-        // --- Initial Setup ---
-        console.log("--- Running Initial Setup ---");
-        // Add CSS rule for disabled button styling dynamically
-        const styleSheet = document.styleSheets[0]; // Assumes first stylesheet is the embedded one
-        try {
-             styleSheet.insertRule('button:disabled { background-color: #777 !important; color: #ccc !important; cursor: not-allowed !important; box-shadow: 0 4px #555 !important; }', styleSheet.cssRules.length);
-             console.log("Initial Setup: Disabled button CSS rule added.");
-        } catch (e) {
-             console.error("Initial Setup: Failed to add disabled button CSS rule.", e);
-        }
-
-        initGame(); // Initialize game state but don't start GPS yet
-        console.log("--- Initial setup complete. Waiting for Start button. ---");
+        };
 
     </script>
-
 </body>
 </html>
-
